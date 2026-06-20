@@ -551,3 +551,37 @@ caused by it.
 Remaining open work: issue #7 (Roswell binary build), issue #8
 (40ants-ci linter wiring), issues #1/#2 (docs). None started.
 
+## Code review correction (2026-06-20): defun-returning-lambda anti-pattern
+
+Flagged in review: `%portable-incf/decf-expander` in
+`src/environment.lisp` was a `defun` whose entire body was a single
+`(lambda (form env) ...)`, used as a closure factory at two call sites
+(`'incf`/`'decf`) with a runtime `ecase` inside the closure dispatching
+on a value that's actually fixed per call site. Since
+`CLEAVIR-ENVIRONMENT:FUNCTION-INFO` is looked up on every `INCF`/`DECF`
+form converted (not once at load time), this meant a fresh closure
+allocation plus a re-checked branch on every single use — overhead for
+a branch whose outcome never varies for a given call site, and the
+only expander in the file that wasn't a plain named function
+referenced via `#'` (worse for debuggability too: anonymous
+closures-from-factories don't show up by name in backtraces).
+
+**Fix**: replaced with `%define-portable-incf/decf-expander`, a
+`defmacro` generating two separately-named, statically-specialized
+functions (`%portable-incf-expander`, `%portable-decf-expander`) with
+the arithmetic operator baked in as a literal at definition time via
+the standard nested-backquote `,',x` idiom — verified directly
+(`macroexpand-1` + functional test of both generated functions plus
+the error path) before trusting it, not just inspected. Call sites
+updated to `#'%portable-incf-expander`/`#'%portable-decf-expander`,
+consistent with every other entry in the dispatch table. All 16 BDD
+checks still pass; `environment.lisp` still compiles with zero
+warnings.
+
+General principle this corrects toward: when a function's "shape" is
+parameterized by something known at the point the code is *written*
+(here: there are only ever two instantiations, INCF and DECF, and
+which one applies is fixed per call site), prefer a macro generating
+named definitions over a runtime closure-returning factory with an
+internal runtime branch on that fixed parameter.
+

@@ -309,15 +309,32 @@ SOURCE-FORM (a form evaluating to a list) against LAMBDA-LIST."
 ;;; macro places and compound (non-symbol) places such as (INCF (AREF A I))
 ;;; are NOT yet supported -- signalled as an explicit error rather than
 ;;; silently mishandled. Extend when a spec demonstrates the need.
-(defun %portable-incf/decf-expander (operator)
-  (lambda (form env)
-    (declare (ignore env))
-    (destructuring-bind (place &optional (delta 1)) (rest form)
-      (unless (symbolp place)
-        (error "sext's portable ~A only supports simple variable places ~
-                (got ~S) -- see src/environment.lisp." operator place))
-      (let ((op (ecase operator (incf '+) (decf '-))))
-        `(setq ,place (,op ,place ,delta))))))
+(defmacro %define-portable-incf/decf-expander (name arithmetic-op)
+  "Define a portable macro-expander function NAME (e.g.
+%PORTABLE-INCF-EXPANDER) for an INCF/DECF-shaped operation, with
+ARITHMETIC-OP (+ or -) baked in directly as a literal at the point
+this generated function is defined, not re-checked at every call.
+There are only ever two instantiations of this (INCF/DECF), and which
+one applies is known when this file is written -- a DEFMACRO
+generating two plain, separately-named DEFUNs is the correct tool
+here, not a runtime closure-returning factory function keyed on a
+dynamically-checked operator argument: that would mean every
+CLEAVIR-ENVIRONMENT:FUNCTION-INFO lookup for CL:INCF/CL:DECF (which
+happens on every INCF/DECF form converted, not once at load time)
+allocates a fresh closure and re-branches on a value that never
+actually varies for a given call site. This also keeps this
+expander's shape consistent with every other one in this file: a
+plain named DEFUN referenced via #', not a factory call."
+  `(defun ,name (form env)
+     (declare (ignore env))
+     (destructuring-bind (place &optional (delta 1)) (rest form)
+       (unless (symbolp place)
+         (error "sext's portable ~A only supports simple variable places ~
+                 (got ~S) -- see src/environment.lisp." ',name place))
+       `(setq ,place (,',arithmetic-op ,place ,delta)))))
+
+(%define-portable-incf/decf-expander %portable-incf-expander +)
+(%define-portable-incf/decf-expander %portable-decf-expander -)
 
 (defmethod cleavir-environment:function-info :around
     ((system sext-system) (env sb-kernel:lexenv) function-name)
@@ -337,9 +354,9 @@ SOURCE-FORM (a form evaluating to a list) against LAMBDA-LIST."
     (cl:cond (make-instance 'cleavir-environment:global-macro-info
                              :name 'cl:cond :expander #'%portable-cond-expander))
     (cl:incf (make-instance 'cleavir-environment:global-macro-info
-                             :name 'cl:incf :expander (%portable-incf/decf-expander 'incf)))
+                             :name 'cl:incf :expander #'%portable-incf-expander))
     (cl:decf (make-instance 'cleavir-environment:global-macro-info
-                             :name 'cl:decf :expander (%portable-incf/decf-expander 'decf)))
+                             :name 'cl:decf :expander #'%portable-decf-expander))
     ;; LOOP: Khazern (s-expressionists/Khazern -- same org as Cleavir,
     ;; originally written for SICL) is a fully portable LOOP implementation
     ;; expanding to genuine ANSI special operators/macros only, and is the
