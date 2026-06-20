@@ -1,0 +1,59 @@
+## sext pipeline architecture
+
+```mermaid
+flowchart TD
+    SRC["Common Lisp source\n(.lisp / .asd files)"]
+    CST["Concrete-Syntax-Tree\nparse source, preserve\nlocation info"]
+    AST["Cleavir CST-to-AST\ncanonicalize to typed\nstandard-object AST nodes\n(expands LOOP, macros, etc.\nvia CLtL2 environment protocol)"]
+    WALK["sext walker\n(THE NEW CODE)\nrecursively visit AST class\nhierarchy via CLOS slots"]
+    ENCODE["trivial-json-codec\nor shasht\nCLOS -> JSON"]
+    JSON["sext AST JSON output\n(complete, unfiltered,\none object per top-level form)"]
+
+    SRC --> CST --> AST --> WALK --> ENCODE --> JSON
+
+    JSON --> REGO["OPA / Rego\npolicy evaluation\n(walk() traverses JSON tree,\nconsuming repo's .rego files\ndefine ALL filtering logic)"]
+    JSON --> SARIF["SARIF tooling\nstatic-analysis findings\nin standard interchange format"]
+    JSON --> CDX["CycloneDX\nSBOM generation\n(language-agnostic,\nreads manifests not AST --\nincluded for pipeline completeness)"]
+    JSON --> VEX["VEX\nvulnerability-exploitability\nattestation -- requires\nhuman judgment, never\nauto-generated from AST"]
+
+    REGO --> GATE{"make qc\ngate decision"}
+    SARIF --> GATE
+    CDX --> GATE
+    VEX --> GATE
+
+    GATE -->|pass| BUILD["make build-all\nproceeds"]
+    GATE -->|fail| BLOCK["build blocked\nregardless of BDD/unit/e2e\ntest pass status"]
+
+    style WALK fill:#f9d77e,stroke:#333,stroke-width:2px
+    style ENCODE fill:#f9d77e,stroke:#333,stroke-width:2px
+    style GATE fill:#e67e7e,stroke:#333,stroke-width:2px
+```
+
+## What is new code vs. existing tooling
+
+Only the two highlighted boxes (`sext walker`, CLOS→JSON encoding glue)
+are net-new code this project writes. Everything else — Concrete-Syntax-Tree,
+Cleavir CST-to-AST, trivial-json-codec/shasht, OPA/Rego, SARIF tooling,
+CycloneDX generators, VEX tooling — is established, externally maintained
+infrastructure that sext orchestrates rather than reimplements.
+
+## Comparison to the C99/podcast-mgr precedent
+
+```mermaid
+flowchart LR
+    subgraph C["C / podcast-mgr (existing, proven)"]
+        direction TB
+        C1["clang -ast-dump=json"] --> C2["nob_ast_filter.jq\n(projection)"] --> C3["nob_ast.rego /\nsarif.rego"]
+    end
+
+    subgraph L["Common Lisp / sext (this project)"]
+        direction TB
+        L1["Concrete-Syntax-Tree +\nCleavir CST-to-AST"] --> L2["sext walker\n(complete dump,\nNO projection step)"] --> L3["consuming repo's\n.rego files\n(walk() does projection\nin Rego itself)"]
+    end
+```
+
+Key difference: C's pipeline has a separate jq projection stage because
+`clang -ast-dump=json` emits far more than any one policy needs. sext's
+design intentionally omits an equivalent projection stage — Rego's
+`walk()` builtin makes a separate filter tool unnecessary, simplifying
+the pipeline by one stage relative to the C precedent.

@@ -1,0 +1,34 @@
+#!/bin/sh
+#|-*- mode:lisp -*-|#
+#|
+exec ros -Q -- $0 "$@"
+|#
+;;;; roswell/sext.ros
+;;;;
+;;;; Roswell entry point for sext. Compiled to a standalone binary via:
+;;;;   ros build roswell/sext.ros
+;;;; Installable by end users via:
+;;;;   ros install denzuko/sext
+;;;;
+;;;; Usage: sext <path-to-lisp-file>
+;;;; Output: JSON AST dump to stdout
+
+(ros:include "package")
+
+(defpackage #:ros.script.sext
+  (:use #:cl))
+
+(in-package #:ros.script.sext)
+
+(defun main (&rest argv)
+  (push (pathname
+         (namestring
+          (truename
+           (merge-pathnames "../"
+                             (directory-namestring
+                              (truename *load-pathname*))))))
+        asdf:*central-registry*)
+  (asdf:load-system :sext)
+  (funcall (find-symbol "MAIN" (find-package :sext)) argv))
+
+;;; vim: set ft=lisp lisp:
