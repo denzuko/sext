@@ -51,17 +51,38 @@ exactly like DUMP-STRING on the file's contents."
       (error 'sext-file-error :path path))
     (dump-string (uiop:read-file-string path))))
 
+(defparameter *usage*
+  "sext -- dumps Common Lisp source as a JSON AST via Cleavir CST-to-AST,
+for OPA/Rego/SARIF/CycloneDX tooling.
+
+Usage:
+  sext <path-to-lisp-file>   Dump PATH's JSON AST to stdout
+  sext --help, -h            Show this message
+
+Output: a JSON array with one entry per top-level form in the file.
+")
+
 (defun main (args)
-  "CLI entry point. ARGS is a list of command-line argument strings
-(currently just a single file path). Writes the JSON dump of that file
-to *STANDARD-OUTPUT* and returns 0 on success; on a SEXT-ERROR, writes
-a message to *ERROR-OUTPUT* and returns 1. This is the function the
+  "CLI entry point. ARGS is a list of command-line argument strings.
+With a single file-path argument, writes the JSON dump of that file to
+*STANDARD-OUTPUT* and returns 0 on success; on a SEXT-ERROR, writes a
+message to *ERROR-OUTPUT* and returns 1. With --help/-h (in any
+position, not just first -- a common CLI convention: --help should
+work even after other flags), writes usage to *STANDARD-OUTPUT* and
+returns 0 without requiring a file argument. With no arguments at all,
+writes usage to *ERROR-OUTPUT* (it's the error case: a file argument
+was expected and not given) and returns 1, rather than signalling an
+unhandled Lisp error from PATHNAME on NIL. This is the function the
 Roswell script (roswell/sext.ros, issue #7) calls."
-  (handler-case
-      (let ((path (first args)))
-        (write-string (dump-file (pathname path)))
-        (terpri)
-        0)
-    (sext-error (e)
-      (format *error-output* "~A~%" e)
-      1)))
+  (cond
+    ((member "--help" args :test #'string=) (write-string *usage*) 0)
+    ((member "-h" args :test #'string=) (write-string *usage*) 0)
+    ((null args) (write-string *usage* *error-output*) 1)
+    (t (handler-case
+           (let ((path (first args)))
+             (write-string (dump-file (pathname path)))
+             (terpri)
+             0)
+         (sext-error (e)
+           (format *error-output* "~A~%" e)
+           1)))))

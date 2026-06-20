@@ -20,15 +20,29 @@ exec ros -Q -- $0 "$@"
 
 (in-package #:ros.script.sext)
 
+;;; Loaded eagerly here at the script's top level, not deferred into MAIN,
+;;; so that `ros build` actually bakes sext (and its SB-CLTL2 contrib
+;;; dependency, required by src/environment.lisp) into the saved image.
+;;; Confirmed by direct testing: when this load was deferred into MAIN
+;;; instead, `ros build` produced a binary that failed at runtime with
+;;; "ASDF could not load sb-cltl2 because Don't know how to REQUIRE
+;;; sb-cltl2" -- the standalone saved/restored image's contrib-module
+;;; search machinery doesn't behave the same as a normal `ros`/`sbcl`
+;;; invocation, so SB-CLTL2 needs to already be loaded into the image at
+;;; save-lisp-and-die time, not re-required on first run. Loading sext here
+;;; also means `ros build` surfaces load-time errors at build time instead
+;;; of deferring them to first invocation, and means MAIN doesn't redo
+;;; ASDF's dependency-graph walk on every single run.
+(push (pathname
+       (namestring
+        (truename
+         (merge-pathnames "../"
+                           (directory-namestring
+                            (truename *load-pathname*))))))
+      asdf:*central-registry*)
+(asdf:load-system :sext)
+
 (defun main (&rest argv)
-  (push (pathname
-         (namestring
-          (truename
-           (merge-pathnames "../"
-                             (directory-namestring
-                              (truename *load-pathname*))))))
-        asdf:*central-registry*)
-  (asdf:load-system :sext)
   (funcall (find-symbol "MAIN" (find-package :sext)) argv))
 
 ;;; vim: set ft=lisp lisp:

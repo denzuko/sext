@@ -184,6 +184,28 @@
             (is (> (length output) 0))))
       (when (probe-file tmp) (delete-file tmp)))))
 
+(test DUMP-14-cli-main-help-flag-prints-usage-and-exits-zero
+  "sext::main, given --help (or -h), writes usage text to stdout and
+   returns 0 without requiring or touching a file argument -- the
+   contract issue #7 sub-item 4 requires, and what removes the need
+   for the `--help || true` escape hatch in the CI build job."
+  (let (exit-code output)
+    (setf output (with-output-to-string (*standard-output*)
+                   (setf exit-code (sext::main (list "--help")))))
+    (is (= exit-code 0))
+    (is (> (length output) 0))
+    (is (search "Usage:" output))))
+
+(test DUMP-15-cli-main-no-args-prints-usage-to-stderr-and-exits-one
+  "sext::main, given no arguments, writes usage to *ERROR-OUTPUT* and
+   returns 1 -- a graceful CLI error, not an unhandled Lisp condition
+   from PATHNAME on NIL."
+  (let (exit-code output)
+    (setf output (with-output-to-string (*error-output*)
+                   (setf exit-code (sext::main nil))))
+    (is (= exit-code 1))
+    (is (> (length output) 0))))
+
 ;;; ── Run suite ────────────────────────────────────────────────────────────
 
 (let ((results (run 'sext-suite)))

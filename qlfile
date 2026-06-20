@@ -1,13 +1,37 @@
 ; qlfile -- qlot dependency manifest for sext
 ; Run: qlot install
 ;
-; Resolved by direct verification (clone + ASDF load against a real SBCL +
-; Quicklisp install) -- see CLAUDE.md, "Issue #3 resolution" for the full
-; evidence trail. Summary:
-;   - concrete-syntax-tree, eclector(-concrete-syntax-tree), khazern*,
-;     com.inuoe.jzon, fiveam, closer-mop, 40ants-doc, 40ants-ci: all
-;     present in the default Quicklisp dist as of dist 2026-01-01. No
-;     Ultralisp needed for any of these.
+; Resolved by direct verification -- a real `qlot install` run against this
+; exact file, not just checking dist metadata. See CLAUDE.md, "Issue #3
+; resolution" and "Issue #7 notes" for the full evidence trail. Summary:
+;
+;   - `ql <name>` takes a Quicklisp PROJECT name (per the dist's
+;     releases.txt), not necessarily an ASDF SYSTEM name -- the two only
+;     coincide when a release's primary system shares the release's name.
+;     An earlier version of this file got this wrong for three entries,
+;     confirmed only by a live `qlot install` actually failing (checking
+;     dist metadata by hand wasn't enough to catch it, since systems.txt
+;     lists every system a release provides without making the
+;     project/system distinction obvious):
+;       - com.inuoe.jzon (the ASDF system) is shipped by the "jzon"
+;         project (releases.txt: project jzon ships src/com.inuoe.jzon.asd)
+;       - eclector-concrete-syntax-tree is shipped by the "eclector"
+;         project, in the SAME release tarball as eclector itself
+;         (releases.txt: project eclector ships both eclector.asd and
+;         eclector-concrete-syntax-tree.asd) -- no separate qlfile line
+;         needed once `ql eclector` is present; ASDF finds it on disk.
+;       - khazern-extrinsic is shipped by the "khazern" project, same
+;         situation (releases.txt: project khazern ships both khazern.asd
+;         and khazern-extrinsic.asd) -- no separate line needed once
+;         `ql khazern` is present.
+;     Fixed: `ql com.inuoe.jzon` -> `ql jzon`; the eclector-concrete-syntax-
+;     tree and khazern-extrinsic lines removed as redundant. sext.asd's own
+;     :depends-on correctly keeps the ASDF SYSTEM names (com.inuoe.jzon,
+;     eclector-concrete-syntax-tree, khazern-extrinsic) -- that's a
+;     different namespace (ASDF system names) and was never the bug; only
+;     this file's PROJECT-name lookups were wrong.
+;   - concrete-syntax-tree, fiveam, closer-mop: project name and the
+;     system name sext needs coincide, no special-casing needed.
 ;   - cleavir-ctype (the AST converter's type-representation protocol)
 ;     ships its own complete default implementation as part of Cleavir
 ;     itself (Ctype/default.lisp, unconditionally loaded) -- no separate
@@ -31,12 +55,10 @@
 ;     subdirectory pushed, not just the repo root.
 
 ql fiveam
-ql com.inuoe.jzon
+ql jzon
 ql concrete-syntax-tree
 ql eclector
-ql eclector-concrete-syntax-tree
 ql khazern
-ql khazern-extrinsic
 
 git cleavir https://github.com/s-expressionists/Cleavir.git
 
