@@ -1,21 +1,33 @@
 ; qlfile -- qlot dependency manifest for sext
 ; Run: qlot install
 ;
-; NOTE for next session: confirm whether Concrete-Syntax-Tree and
-; Cleavir's CST-to-AST system are present in the default Quicklisp
-; dist, or whether they need to be pulled from Ultralisp / git source
-; directly (Cleavir has historically been distributed more often via
-; direct git clone + ASDF registry push than via Quicklisp proper --
-; verify before assuming `ql cleavir` resolves).
+; Resolved by direct verification (clone + ASDF load against a real SBCL +
+; Quicklisp install) -- see CLAUDE.md, "Issue #3 resolution" for the full
+; evidence trail. Summary:
+;   - concrete-syntax-tree, eclector(-concrete-syntax-tree), khazern*,
+;     ctype/ctype-tfun, trivial-json-codec, shasht, com.inuoe.jzon,
+;     fiveam, closer-mop, 40ants-doc, 40ants-ci: all present in the
+;     default Quicklisp dist as of dist 2026-01-01. No Ultralisp needed
+;     for any of these.
+;   - Cleavir (cleavir-cst-to-ast, cleavir-ast, and the rest of the
+;     cleavir-* family) is NOT in Quicklisp or Ultralisp (verified: zero
+;     matches in either dist's systems.txt/releases.txt). It ships only
+;     as a single monorepo at the URL below; every cleavir-*.asd file
+;     lives in its own subdirectory, so the registry needs each
+;     subdirectory pushed, not just the repo root.
 
 ql fiveam
 ql com.inuoe.jzon
 ql trivial-json-codec
 ql shasht
+ql concrete-syntax-tree
+ql eclector
+ql eclector-concrete-syntax-tree
+ql khazern
+ql khazern-extrinsic
+ql ctype
+ql ctype/tfun
 
-; Likely needs git-source entries, e.g.:
-; git concrete-syntax-tree https://github.com/s-expressionists/Concrete-Syntax-Tree.git
-; git cleavir https://github.com/s-expressionists/Cleavir.git
-; CONFIRM AND UNCOMMENT / CORRECT NEXT SESSION.
+git cleavir https://github.com/s-expressionists/Cleavir.git
 
 ultralisp 40ants-doc

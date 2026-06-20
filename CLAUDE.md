@@ -222,3 +222,122 @@ JSON → (Rego | SARIF tooling | CycloneDX | VEX) → gate decision.
   this exact failure mode (an ignored `extra-bindings` parameter with
   a stale "future: token substitution" comment) is what prompted part
   of the mlisp review that led to this project existing.
+
+## Issue #3 resolution (2026-06-20)
+
+Resolved by direct, empirical verification: cloned Cleavir, installed a
+real SBCL + Quicklisp, and actually loaded/exercised the pipeline rather
+than reading docs alone. Full findings below; this also substantially
+de-risks issues #4 and #5, which is why the writeup goes beyond "the
+system names are X."
+
+**System names and sourcing** (now reflected in `sext.asd`/`qlfile`):
+
+- `concrete-syntax-tree`, `eclector`, `eclector-concrete-syntax-tree`,
+  `khazern`, `khazern-extrinsic`, `ctype`, `ctype/tfun`,
+  `trivial-json-codec`, `com.inuoe.jzon`, `shasht`, `fiveam`,
+  `closer-mop`, `40ants-doc`, `40ants-ci` — all present in the default
+  Quicklisp dist (2026-01-01). No Ultralisp needed for any of these.
+- `cleavir-cst-to-ast` (and every other `cleavir-*` system) is **not**
+  on Quicklisp or Ultralisp — confirmed zero matches in either dist's
+  systems.txt/releases.txt. Cleavir ships only as a single monorepo at
+  `github.com/s-expressionists/Cleavir` (it used to be split across
+  several repos; CLAUDE.md's original assumption of a separate `AST/`
+  repo etc. was wrong). Every subdirectory containing a `.asd` needs to
+  be pushed onto the ASDF registry, not just the repo root.
+- Previously unflagged gap: Concrete-Syntax-Tree itself does not read
+  text into CSTs — that's `eclector-concrete-syntax-tree`
+  (`eclector.concrete-syntax-tree:read-from-string`), a separate system.
+
+**A live-SBCL `cleavir-environment` bridge is required and was not
+anticipated by the original design.** `cleavir-cst-to-ast:cst-to-ast`
+needs an environment object satisfying the full `cleavir-environment`
+generic-function protocol (variable-info, function-info, optimize-info,
+declarations, type-expand, eval, cst-eval) — there is no default/no-op
+implementation. Cleavir's own shipped example bridges
+(`Environment/Examples/{hostile,sbcl}.lisp`) are written against an
+older version of this protocol and do not load as-is (e.g.
+`optimize-info` used to take 1 argument, now takes 2). sext owns a
+current, from-scratch bridge at `src/environment.lisp`, built on
+`sb-cltl2`, verified by direct testing.
+
+**A `cleavir-ctype` ↔ `ctype` glue layer is also required.**
+`cleavir-ctype` is an abstract protocol with no default implementation;
+a concrete type representation must be supplied. `ctype`/`ctype/tfun`
+(a separate library by the same org, on Quicklisp) is the concrete
+backend Cleavir's own `Example/` frontend uses, and is what
+`src/environment.lisp` now wires in. Without this, converting *any*
+ordinary function call (e.g. `(+ a b)`) fails inside
+`CLEAVIR-CST-TO-AST::MAKE-CALL`. sext only needs an "unconstrained
+function of anything" ctype to avoid crashing — no real type
+inference — which is what's implemented.
+
+**Structural risk, confirmed by direct testing (not theoretical):**
+several of SBCL's own standard-macro implementations call private
+`SB-C` internals directly on whatever environment object their
+expander function receives, instead of going through the portable
+`SB-CLTL2` API. This breaks when the environment is one of
+`cleavir-environment`'s augmentation-chain objects (`TAG`, `BLOCK`,
+`VARIABLE-TYPE`, etc.) rather than a genuine `SB-KERNEL:LEXENV`.
+Confirmed instances:
+- `CL:DEFUN`/`CL:DEFMACRO` expand via `SB-INT:NAMED-LAMBDA`, which
+  Cleavir's `FUNCTION` special-form converter correctly rejects (not
+  ANSI-specified). **Workaround applied**: portable expanders in
+  `src/environment.lisp` bypass SBCL's macro entirely for these two.
+- `CL:WHEN`/`CL:UNLESS`, when their body is a single `(GO tag)` form
+  (exactly LOOP's end-of-list-test shape) — SBCL's "prognify"
+  optimization calls `SB-C::%COERCE-TO-POLICY` on the env argument.
+  **Workaround applied**: same pattern, portable expanders.
+- `CL:LOOP` itself, independently. **Workaround applied**: delegate to
+  Khazern (`s-expressionists/Khazern`, same org as Cleavir, originally
+  written for SICL, currently used by SICL and Clasp for exactly this
+  reason) instead of SBCL's native LOOP.
+- **Still open, not yet fixed**: Khazern's own portable expansion is
+  clean (verified: only BLOCK/LET*/LABELS/TAGBODY/GO/WHEN/COND/
+  RETURN-FROM, no SBCL internals — confirmed by direct macroexpansion
+  inspection) but its accumulator update uses `CL:INCF`, and sext's own
+  portable DEFMACRO expander uses `CL:DESTRUCTURING-BIND` — both
+  standard *macros* (not special operators), both observed to fail the
+  same class of error when expanded through this bridge. This means
+  **DUMP-8 (LOOP) and DUMP-9 (DEFMACRO) are not yet green**, even with
+  every fix above applied. Two candidate directions for issue #5:
+  (a) keep extending the portable-override allowlist one macro at a
+  time as BDD specs surface each failure (consistent with project
+  discipline, but plausibly whack-a-mole — the set of "leaky" SBCL
+  macros isn't yet known to be finite/enumerable), or
+  (b) adopt a portable standard-macro layer wholesale (same category of
+  project as Khazern, but for SETF/INCF/DECF/DESTRUCTURING-BIND/etc.)
+  instead of bridging to SBCL's native versions of these at all, and
+  reserve the live-SBCL bridge for genuinely user-defined macros and
+  true unknowns only. **This decision should be made explicitly at the
+  start of issue #5**, not implicitly by whichever fix compiles first.
+
+**Verified working** (direct testing, real SBCL, real Cleavir, through
+the actual `sext` ASDF system — not just a throwaway script): simple
+`defun`, `defun` with a docstring, multiple independent top-level
+forms (e.g. `defpackage`) processed one at a time. **Verified still
+failing**: LOOP-wrapped-in-defun (DUMP-8), defmacro (DUMP-9) — both for
+the INCF/DESTRUCTURING-BIND reason above. `dump-string`'s empty-string
+handling (DUMP-11) also not yet addressed — Eclector signals EOF on an
+empty string by default; needs explicit `:eof-error-p nil` handling.
+That's issue #6 territory, noted here only because it surfaced during
+verification.
+
+**Landed in this branch**: `sext.asd` and `qlfile` updated with the
+confirmed dependency list above; `src/environment.lisp` added (the
+verified bridge + ctype glue + portable-macro overrides, ~230 lines,
+fully documented inline with the same evidence trail as this section).
+`src/walker.lisp`, `src/serialize.lisp`, `src/main.lisp` are
+untouched — still stubs. Issue #5 (walk-ast) is next, and should start
+by resolving the open LOOP/DEFMACRO question above before writing the
+walker itself, since the answer changes how much of the walker needs
+to special-case "leaky" macro shapes versus trusting the AST it's
+handed.
+
+**Environment limitation**: this work was done in a sandboxed container
+with no GitHub credentials (no `gh` CLI, no `GH_TOKEN`, push over HTTPS
+fails with no way to authenticate). All work above is committed locally
+on the `issue-3-confirm-cleavir-systems` branch (off `develop`, off
+`main`) but has not been pushed or opened as a PR — that needs to
+happen from an environment with real GitHub access.
+
