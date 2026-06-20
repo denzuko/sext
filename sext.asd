@@ -2,10 +2,6 @@
 ;;;;
 ;;;; sext -- dump Common Lisp source as a structured AST JSON object.
 ;;;; See CLAUDE.md for full design rationale before implementing.
-;;;;
-;;;; STATUS: skeleton only. src/*.lisp files are stubs raising
-;;;; "not yet implemented" -- the next session's job is BDD-first
-;;;; implementation against test/fiveam/test-sext.lisp.
 
 (defsystem "sext"
   :description "Dump Common Lisp source as a structured AST JSON object, for piping into OPA/Rego, SARIF, and CycloneDX quality/security gates."
@@ -26,10 +22,14 @@
                "eclector-concrete-syntax-tree"
                "cleavir-cst-to-ast"
                "khazern-extrinsic"
-               ;; CLOS-to-JSON -- decision still open, see issue #4.
-               ;; Keeping both candidates until one is proven against
-               ;; sext's actual walked data shape.
-               "trivial-json-codec"
+               ;; CLOS-to-JSON: resolved (issue #4, see src/walker.lisp's
+               ;; file header for the full evidence trail) -- neither
+               ;; trivial-json-codec nor shasht is needed. The walker
+               ;; fully flattens Cleavir's AST objects to plain data via
+               ;; Cleavir's own CLEAVIR-IO:SAVE-INFO protocol; only a
+               ;; thin plain-data JSON writer is needed for the output
+               ;; side, and com.inuoe.jzon (already required for the
+               ;; test suite's read side) covers that directly.
                "com.inuoe.jzon")
   :components
   ((:file "src/package")

@@ -449,3 +449,105 @@ build log is entirely inside Cleavir's own upstream source,
 making AST conversion itself succeed for all needed input shapes was
 the prerequisite; writing the walker is the next piece of work.
 
+## Issue #4, #5 (walker), and #6 resolution (2026-06-20)
+
+The actual `src/walker.lisp` implementation, plus `src/serialize.lisp`
+and `src/main.lisp` (`dump-string`/`dump-file`/`main`), all landed
+together — they turned out to be tightly coupled (the walker's output
+shape and the JSON-encoding decision aren't really separable design
+questions, and the walker can't be meaningfully tested without
+`dump-string` wrapping it), so this resolves issues #4, #6, and the
+remainder of #5 (the walker proper, as opposed to the CST-to-AST
+conversion layer #5's earlier commits fixed) in one pass.
+
+**Issue #4's question** — does `trivial-json-codec` or `shasht` handle
+Cleavir's actual AST classes "out of the box" — was answered by reading
+Cleavir's own source rather than testing the two candidates against it
+(a better question turned out to be available): every AST class in
+`Abstract-syntax-tree/general-purpose-asts.lisp` calls
+`CLEAVIR-IO:DEFINE-SAVE-INFO` with its own meaningful, named slots
+(confirmed directly — e.g. `function-ast`'s save-info includes `:name`,
+`:docstring`, `:lambda-list`, `:body-ast`; `call-ast`'s includes
+`:callee-ast`, `:argument-asts`, `:inline`). This is Cleavir's *own*
+canonical "what's interesting about this node" protocol, used
+internally for Cleavir's own model serialization/printing — a far
+better foundation than blind MOP slot introspection (which would
+surface internal bookkeeping never meant for serialization) and than
+hoping a generic CLOS-JSON codec's defaults happen to produce something
+sensible for an object graph with deliberate sharing. Given that,
+**neither `trivial-json-codec` nor `shasht` is needed at all**:
+`src/walker.lisp` does its own recursive descent via `cleavir-io:save-info`,
+fully flattening every AST node down to plain hash-tables/vectors/
+strings/numbers/symbols/booleans before handoff to `src/serialize.lisp`,
+which only needs a thin pass-through to `com.inuoe.jzon:stringify` (a
+JSON writer for already-plain data — already a dependency, since it's
+what the test suite itself parses output with). Both unneeded
+dependencies removed from `sext.asd`/`qlfile`.
+
+**Object identity/sharing**: Cleavir's AST is generally tree-shaped, but
+some nodes — most commonly `lexical-variable`/`lexical-ast` — are
+deliberately referenced from multiple places (a variable bound once,
+read or `setq`'d several times). The walker assigns each AST node a
+sequential `:id` the first time it's encountered and emits `{"ref":
+id}` on subsequent encounters instead of re-expanding — bounded output,
+no risk from a true cycle if one ever exists, and useful in its own
+right for downstream Rego/SARIF correlation.
+
+**Symbol case**: standard-case (unescaped, read as upper-case) symbol
+names are downcased in JSON output, matching how `*print-case*
+:downcase` conventionally renders them and matching what the BDD specs
+actually assert (e.g. `(search "add" json-str)`, lowercase, against a
+function literally named `add`). Genuinely mixed-case symbols (created
+via `|...|` escapes) are left exactly as interned.
+
+**A determinism issue found and fixed in the same pass**: every AST
+node's `:origin` slot holds a Concrete-Syntax-Tree CST object, whose
+default `print-object` embeds an opaque, non-deterministic memory
+address (`#<CONS-CST raw: ... {1002DC5813}>`). Walking that naively
+would have made `dump-string`'s output non-reproducible run-to-run for
+identical input — a real defect for a tool meant to feed reproducible
+supply-chain/SBOM tooling, not just a cosmetic one. Fixed by
+special-casing CST objects in the walker to extract
+`concrete-syntax-tree:raw` (the library's own accessor for "the
+underlying s-expression") and walk that instead — verified
+byte-for-byte identical output across repeated runs on the same input.
+(`concrete-syntax-tree:source` would give genuine source-location info
+or line/column, but is `nil` throughout sext's current pipeline since
+`dump-string`/`dump-file` don't bind Eclector's source-tracking client;
+a future issue could wire that up if line/column info in `origin`
+becomes valuable to a consuming policy.)
+
+**`NIL` encoding, a deliberate, documented tradeoff**: a bare Lisp
+`NIL` slot value (as opposed to an empty list reached through normal
+list recursion, which is unambiguous) is encoded as JSON `false`,
+matching `com.inuoe.jzon`'s own native convention exactly. This means a
+slot that's conceptually "absent" and a slot that's the boolean value
+`NIL` are indistinguishable in the output, which is an inherent
+ambiguity of Lisp's own `NIL` (not something this walker introduces or
+could fully resolve generically without per-slot semantic knowledge
+this walker doesn't have). Not currently a problem for any of the 13
+BDD specs; flagged here rather than left silently undocumented.
+
+**Reading/conversion order**: `dump-string` reads and converts each
+top-level form one at a time (not "read everything, then convert
+everything"), so a compile-time side effect from an earlier form —
+most commonly `in-package` — is visible when reading later ones,
+matching ordinary `cl:load` semantics. `*compiler*` is bound to
+`cl:eval` per the reasons already documented in `environment.lisp`'s
+"EVAL / CST-EVAL" section.
+
+**Verification**: all 13 BDD specs pass (16/16 checks), on the first
+full run against the real implementation — no iteration needed beyond
+the determinism fix above, which was caught by manual inspection of
+actual output rather than by a failing spec (no current spec probes
+reproducibility). A clean full-system load produces zero warnings in
+any of sext's own source files; the only warnings anywhere in the
+build log are pre-existing, upstream (Cleavir's own source) or in
+`test/fiveam/test-sext.lisp` itself (an unused-variable style-warning
+in one test, an undefined free variable check in the suite's own
+runner) — neither touched, since both predate this work and aren't
+caused by it.
+
+Remaining open work: issue #7 (Roswell binary build), issue #8
+(40ants-ci linter wiring), issues #1/#2 (docs). None started.
+
