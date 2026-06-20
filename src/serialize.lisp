@@ -1,21 +1,21 @@
 ;;;; src/serialize.lisp -- encode walked AST data structures to JSON
 ;;;;
-;;;; STATUS: STUB. Not yet implemented.
-;;;;
-;;;; Decision needed from next session (see CLAUDE.md "JSON serialization"
-;;;; section): trivial-json-codec vs shasht for the CLOS-aware encoding
-;;;; step, OR if src/walker.lisp's output is already plain plists/hashtables
-;;;; (not raw CLOS instances), a plain jzon:stringify may suffice without
-;;;; needing a CLOS-aware codec at all -- this depends on whether walk-ast
-;;;; fully flattens to plain data or passes CLOS instances through.
-;;;; Recommend flattening fully in walk-ast (simpler, more portable across
-;;;; JSON backends) and using plain jzon:stringify here unless a concrete
-;;;; reason for a CLOS-aware codec emerges during implementation.
+;;;; Resolved (issue #4): src/walker.lisp's WALK-AST/WALK-TOP-LEVEL-FORMS
+;;;; already fully flatten Cleavir's CLOS AST objects into plain Lisp data
+;;;; (hash-tables for JSON objects, vectors for JSON arrays, strings,
+;;;; numbers, symbols, and the booleans T/NIL) -- see walker.lisp's file
+;;;; header for the full evidence trail on why neither trivial-json-codec
+;;;; nor shasht is needed. That means this file needs only a thin pass
+;;;; through to a plain JSON writer for already-plain data:
+;;;; COM.INUOE.JZON:STRINGIFY, which already natively understands every
+;;;; value shape the walker produces (hash-table -> object, vector ->
+;;;; array, T/NIL -> true/false, string/integer/float/ratio -> the
+;;;; obvious JSON equivalents) with zero further configuration.
 
 (in-package #:sext)
 
 (defun serialize-to-json (walked-data)
-  "Encode WALKED-DATA (output of walk-ast, plain Lisp data structures)
-   to a JSON string. NOT YET IMPLEMENTED."
-  (declare (ignore walked-data))
-  (error "sext::serialize-to-json not yet implemented."))
+  "Encode WALKED-DATA (the output of WALK-AST/WALK-TOP-LEVEL-FORMS --
+already-plain hash-tables/vectors/strings/numbers/symbols/booleans, not
+raw CLOS AST instances) to a JSON string."
+  (com.inuoe.jzon:stringify walked-data))
