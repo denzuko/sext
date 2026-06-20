@@ -5,10 +5,16 @@
 ; Quicklisp install) -- see CLAUDE.md, "Issue #3 resolution" for the full
 ; evidence trail. Summary:
 ;   - concrete-syntax-tree, eclector(-concrete-syntax-tree), khazern*,
-;     ctype/ctype-tfun, trivial-json-codec, shasht, com.inuoe.jzon,
-;     fiveam, closer-mop, 40ants-doc, 40ants-ci: all present in the
-;     default Quicklisp dist as of dist 2026-01-01. No Ultralisp needed
-;     for any of these.
+;     trivial-json-codec, shasht, com.inuoe.jzon, fiveam, closer-mop,
+;     40ants-doc, 40ants-ci: all present in the default Quicklisp dist as
+;     of dist 2026-01-01. No Ultralisp needed for any of these.
+;   - cleavir-ctype (the AST converter's type-representation protocol)
+;     ships its own complete default implementation as part of Cleavir
+;     itself (Ctype/default.lisp, unconditionally loaded) -- no separate
+;     `ctype`/`ctype/tfun` library dependency needed. An earlier version
+;     of this manifest listed `ctype`/`ctype/tfun` on the mistaken
+;     assumption that Cleavir's own Example/ frontend's choice of backend
+;     was required; see CLAUDE.md, "Issue #5 notes" for the full story.
 ;   - Cleavir (cleavir-cst-to-ast, cleavir-ast, and the rest of the
 ;     cleavir-* family) is NOT in Quicklisp or Ultralisp (verified: zero
 ;     matches in either dist's systems.txt/releases.txt). It ships only
@@ -25,8 +31,6 @@ ql eclector
 ql eclector-concrete-syntax-tree
 ql khazern
 ql khazern-extrinsic
-ql ctype
-ql ctype/tfun
 
 git cleavir https://github.com/s-expressionists/Cleavir.git
 

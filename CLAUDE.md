@@ -328,16 +328,124 @@ confirmed dependency list above; `src/environment.lisp` added (the
 verified bridge + ctype glue + portable-macro overrides, ~230 lines,
 fully documented inline with the same evidence trail as this section).
 `src/walker.lisp`, `src/serialize.lisp`, `src/main.lisp` are
-untouched — still stubs. Issue #5 (walk-ast) is next, and should start
-by resolving the open LOOP/DEFMACRO question above before writing the
-walker itself, since the answer changes how much of the walker needs
-to special-case "leaky" macro shapes versus trusting the AST it's
-handed.
+untouched — still stubs.
 
-**Environment limitation**: this work was done in a sandboxed container
-with no GitHub credentials (no `gh` CLI, no `GH_TOKEN`, push over HTTPS
-fails with no way to authenticate). All work above is committed locally
-on the `issue-3-confirm-cleavir-systems` branch (off `develop`, off
-`main`) but has not been pushed or opened as a PR — that needs to
-happen from an environment with real GitHub access.
+**Push/PR**: this work was committed and pushed via a short-lived,
+project-scoped GitHub PAT supplied by the project owner, and opened as
+**PR #9** (`issue-3-confirm-cleavir-systems` → `develop`) for review.
+Not merged — per project workflow rules, merging only happens on
+explicit "ok do it" from the owner.
+
+## Issue #5 notes (2026-06-20)
+
+Issue #3's PR flagged an open question: Khazern's own LOOP expansion,
+and sext's own portable DEFMACRO expander, both transitively use
+standard macros (`CL:INCF`, `CL:DESTRUCTURING-BIND`) that turned out to
+hit the same SBCL-internals-leak class of bug as `WHEN`/`UNLESS`/`LOOP`
+before them. Two directions were proposed: (a) keep extending the
+portable-override allowlist one macro at a time as BDD specs surface
+each failure, or (b) adopt a portable standard-macro layer wholesale.
+
+**Decision, made explicitly at the start of this work (not implicitly
+by whichever fix happened to compile first)**: a hybrid of the two.
+Maintain a small, closed, explicitly-documented set of portable
+expanders for exactly the standard macros structurally necessary
+(`DEFUN`, `DEFMACRO`, `WHEN`, `UNLESS`, `COND`, `INCF`, `DECF`,
+`DESTRUCTURING-BIND`, plus `LOOP` via Khazern), each producing only
+genuine ANSI special operators or other already-vetted entries in this
+same set — never delegating any of these specific symbols to the live
+SBCL image at all. Everything else (ordinary function calls,
+genuinely user-defined macros, and any standard macro not on this
+list) still goes through the live-image bridge as before. This is
+scoped to exactly what the 13 BDD specs need, not a full portable
+reimplementation of the standard library, and not open-ended
+whack-a-mole either — the allowlist is the actual deliverable, and any
+future addition follows the same discipline (confirm by direct
+testing, then add the smallest portable expander that fixes it).
+
+**Root causes confirmed by direct backtrace debugging:**
+
+- `CL:COND`: SBCL's "prognify" fast-path optimization, for a clause
+  with no body forms (e.g. a trailing `(t)` clause — exactly what
+  Khazern's `WHEN`-clause compilation produces), calls
+  `SB-C::%COERCE-TO-POLICY` directly on the foreign environment object.
+  Same root cause class as the `WHEN`/`UNLESS` issue from #3.
+- `CL:DESTRUCTURING-BIND` and `CL:INCF`/`CL:DECF`: both internally
+  check whether their target/place might be a symbol-macro by calling
+  SBCL-internal `%MACROEXPAND-1` directly on the macroexpansion-time
+  environment, via `SB-IMPL::MACROEXPAND-FOR-SETF`/`GET-SETF-EXPANSION`
+  machinery. Confirmed via direct backtrace on both forms.
+
+**Fixes applied** (all in `src/environment.lisp`):
+
+- `%portable-cond-expander`: expands to nested `IF`s. A test-only
+  clause (no body) needs a fresh temporary to avoid re-evaluating the
+  test, per CLHS 5.3.
+- `%dbind-bindings` / `%portable-destructuring-bind-expander`: a
+  from-scratch portable destructuring implementation using only
+  `LET*`/`CAR`/`CDR`, replacing `CL:DESTRUCTURING-BIND` entirely
+  (including inside sext's own `%portable-defmacro-expander`'s
+  generated code, removing a chicken/egg dependency on the override
+  table). Supports required parameters (including nested
+  sub-lambda-lists), `&OPTIONAL` (default + supplied-p), `&REST`/
+  `&BODY`, and `&KEY` (default + supplied-p). Does NOT support
+  `&WHOLE`, `&ENVIRONMENT`, `&ALLOW-OTHER-KEYS` validation, or nested
+  patterns inside `&OPTIONAL`/`&KEY` — none of the current 13 BDD specs
+  need them; documented as an explicit limitation rather than silently
+  dropped, same discipline as everywhere else in this file. Verified
+  correct for both flat (`(test &body body)`, DUMP-9's actual fixture)
+  and nested (`((a b) form &body body)`) lambda lists by direct testing
+  through the real CST-to-AST pipeline.
+- `%portable-incf/decf-expander`: scoped explicitly to simple-symbol
+  places only (the only shape Khazern's accumulator update needs, and
+  the only shape any current BDD spec needs) — expands directly to
+  `(setq place (+ place delta))` / `(setq place (- place delta))`,
+  bypassing `GET-SETF-EXPANSION` entirely for this case. Compound
+  places (e.g. `(incf (aref a i))`) signal a clear, explicit error
+  rather than being silently mishandled — documented limitation, not a
+  silent gap.
+
+**A second, independent bug found and fixed in the same pass — the
+ctype glue:** issue #3's hand-written ~70-line `cleavir-ctype` ↔
+external-`ctype`/`ctype/tfun`-library glue layer (modeled on Cleavir's
+own `Example/type.lisp`) was not just unnecessary but actively buggy.
+`cleavir-ctype` ships its OWN complete default implementation
+(`Ctype/default.lisp`, unconditionally part of the `:cleavir-ctype`
+ASDF system per its own `.asd` — confirmed by reading it directly —
+representing ctypes as plain CL type specifiers and using `CL:SUBTYPEP`
+directly, zero client code required). The custom methods specialized
+on `SEXT-SYSTEM` returned CLOS objects from the external `ctype`
+library for `TOP`/`FUNCTION`/`VALUES`/etc., while every OTHER
+`cleavir-ctype` generic function sext hadn't overridden (`CLASS`,
+`CONJOIN/2`, `NEGATE`, `TOP-P`, ...) silently fell back to
+`default.lisp`'s unspecialized (T-applicable) methods, which assume
+the plain-type-specifier representation throughout. Mixing the two
+crashed with `"bad thing to be a type specifier: #<CTYPE:CONJUNCTION
+T>"` as soon as a `DECLARE TYPE` form was processed (LOOP's
+accumulator type declaration, via Khazern, triggered it). Fix: deleted
+the entire custom glue block; replaced with a single small helper,
+`%unconstrained-function-type`, built entirely from `cleavir-ctype`'s
+own constructors (`cleavir-ctype:function`/`top`/`values`), relying on
+`default.lisp` for everything else. Removed `ctype`/`ctype/tfun` from
+`sext.asd` and `qlfile` entirely — sext never needed that dependency.
+
+**Verification**: all 13 BDD-relevant fixture shapes pass through the
+real `sext` ASDF system, including: simple `defun`, `defun`+docstring,
+four LOOP variants (`for/when/sum` — DUMP-8's actual fixture — plus
+`for/when/collect`, `for/collect`, and simple counting),
+`defmacro` (DUMP-9's actual fixture, plus a nested-destructuring
+variant), `defpackage`, and multiple top-level forms. Additionally,
+the resulting LOOP AST was walked (via `cleavir-ast:children`) and
+confirmed to genuinely contain `GO-AST`/`TAG-AST`/`IF-AST`
+control-flow nodes — not opaque syntax — validating the core
+Cleavir-vs-naive-walker differentiator this project is built on. A
+clean full-system load produces zero warnings or notes in any of
+sext's own source files (the one remaining `STYLE-WARNING` in the
+build log is entirely inside Cleavir's own upstream source,
+`Abstract-syntax-tree/general-purpose-asts.lisp`, unrelated to sext).
+
+`src/walker.lisp` (the actual AST-to-JSON-shaped-IR conversion),
+`src/serialize.lisp`, and `src/main.lisp` remain untouched stubs —
+making AST conversion itself succeed for all needed input shapes was
+the prerequisite; writing the walker is the next piece of work.
 

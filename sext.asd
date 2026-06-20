@@ -26,7 +26,6 @@
                "eclector-concrete-syntax-tree"
                "cleavir-cst-to-ast"
                "khazern-extrinsic"
-               "ctype/tfun"
                ;; CLOS-to-JSON -- decision still open, see issue #4.
                ;; Keeping both candidates until one is proven against
                ;; sext's actual walked data shape.
