@@ -729,25 +729,31 @@ false-positive, not just a generic "style tools should be advisory"
 policy -- idiom/style advice a human reviews, not a hard gate that
 would force working around legitimate, justified exceptions.
 
-**sblint: still genuinely broken, not yet root-caused.** Even with the
-CL_SOURCE_REGISTRY fix (which did resolve the original "cleavir-cst-
-to-ast not found" failure), a live run now hits a new, different
-failure: `Component "trinsic" not found`, traced via backtrace into
-sblint's own dependency walk of `khazern-extrinsic`. Checked the
-obvious explanation directly: `khazern-extrinsic.asd`'s own
-`:depends-on` is just `("khazern")` -- nothing resembling "trinsic"
-anywhere in it. Lisp Critic, run against the exact same sext system
-with the exact same CL_SOURCE_REGISTRY setup, does NOT hit this --
-ruling out qlot/Cleavir/khazern-extrinsic resolution in general as the
-cause and pointing at something specific to sblint's own
-PACKAGE-INFERRED-SYSTEM dependency-walking code
-(`sblint/utilities/asdf:all-required-systems`) interacting badly with
-khazern-extrinsic specifically. Not pursued further this session (real
-diminishing returns on a likely-upstream issue) -- wired into CI as
-**non-blocking** (`continue-on-error: true`) so it still surfaces
-output for a human to look at, but pending root-cause, not a permanent
-policy decision the way critic's advisory status is. Re-enable as
-blocking once root-caused.
+**sblint: was hitting a "trinsic" failure, now root-caused as a stale
+environment artifact, not a real bug.** Even with the CL_SOURCE_REGISTRY
+fix (which did resolve the original "cleavir-cst-to-ast not found"
+failure), an earlier live run hit `Component "trinsic" not found`,
+traced via backtrace into sblint's own dependency walk of
+`khazern-extrinsic`. Checked the obvious explanation directly:
+`khazern-extrinsic.asd`'s own `:depends-on` is just `("khazern")` --
+nothing resembling "trinsic" anywhere in it. Wired into CI as
+non-blocking pending root-cause, not as a permanent policy decision.
+
+**Re-investigated (2026-06-21) and resolved**: re-ran the exact CI
+command (`~/.roswell/bin/sblint sext.asd`, identical
+`CL_SOURCE_REGISTRY`) against a freshly reinstalled `sblint` and a
+fresh Cleavir clone, with `~/.cache/common-lisp` cleared to rule out a
+stale FASL cache -- passed cleanly, twice, exit 0 both times. The
+verbose log shows exactly why: `trinsic` is a real, legitimate
+transitive dependency, listed plainly among the 31 systems sblint
+loads (right after `khazern-extrinsic khazern`), not a missing
+component at all. The original failure was reproduced as
+*not*-reproducible against a fresh install/dist -- almost certainly a
+stale local Quicklisp dist or cache artifact specific to that earlier
+point in the session, not a real defect in this repo, in
+khazern-extrinsic, or in the CL_SOURCE_REGISTRY approach. Re-enabled as
+a blocking CI gate (`continue-on-error: true` removed).
+
 
 ## Issue #1 notes (2026-06-20): JSON schema documentation
 

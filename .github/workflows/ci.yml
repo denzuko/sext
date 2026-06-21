@@ -58,16 +58,20 @@ jobs:
         run: |
           ros install fukamachi/sblint
           ros install 40ants/40ants-critic
-      # NON-BLOCKING pending further investigation: a live run hits
-      # `Component "trinsic" not found`, traced into sblint's own
-      # khazern-extrinsic dependency walk -- not a problem in
-      # khazern-extrinsic.asd itself (inspected directly: its :depends-on
-      # is just ("khazern"), nothing resembling "trinsic" anywhere), so
-      # this looks like an sblint-internal PACKAGE-INFERRED-SYSTEM
-      # dependency-walking quirk rather than anything wrong in this repo.
-      # Re-enable as blocking once root-caused.
-      - name: Lint with sblint (non-blocking, see note above)
-        continue-on-error: true
+      # Was non-blocking pending investigation of a `Component "trinsic"
+      # not found` failure, traced into sblint's own khazern-extrinsic
+      # dependency walk. Re-investigated (2026-06-21): "trinsic" is a
+      # real, legitimate transitive dependency -- it appears in
+      # sblint's own normal "Loading N systems" list on a clean run,
+      # right after khazern-extrinsic/khazern, not as a missing
+      # component. The earlier failure was reproduced not being
+      # reproducible against a fresh sblint install/Quicklisp dist
+      # (re-installed sblint, cleared ~/.cache/common-lisp, re-ran
+      # against the exact CI command/CL_SOURCE_REGISTRY twice) -- almost
+      # certainly a stale local dist/cache artifact from earlier in
+      # that session, not a real bug in this repo or in the
+      # CL_SOURCE_REGISTRY approach itself. Re-enabled as blocking.
+      - name: Lint with sblint
         env:
           CL_SOURCE_REGISTRY: '(:source-registry (:tree "/tmp/cleavir-checkout/") :inherit-configuration)'
         run: ~/.roswell/bin/sblint sext.asd
