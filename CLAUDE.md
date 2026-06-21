@@ -830,3 +830,55 @@ separate, heavier `40ants-doc-full` system (markdown parser and other
 deps `40ants-doc` deliberately doesn't pull in by default) -- noted
 directly in `docs/index.lisp`'s own header rather than left implicit.
 
+## Issue #11 notes (2026-06-21): GitHub Actions
+
+Two actions, matching the issue's own description ("first installs
+the sext binary the second consumes it"):
+
+**`denzuko/setup-sext`** -- a new, separate repo (standard
+`actions/setup-X` convention; created with the same PAT used
+throughout this session, confirmed via a throwaway probe repo it has
+repo-creation rights before committing to the real one). Composite
+action: installs Roswell + qlot if missing, resolves the `version`
+input (branch/tag/SHA) to a commit SHA via `git ls-remote` for a
+stable `actions/cache@v4` key (so it doesn't go stale against a moving
+branch, and doesn't rebuild every run against an unchanged target),
+clones+builds via `qlot install` + `qlot exec ros build
+roswell/sext.ros` (with a tested fallback from a shallow `--branch`
+clone to a full clone + checkout, for when `version` is a raw commit
+SHA rather than a named ref -- `--branch` only accepts refs), installs
+to `~/.local/bin`, verifies via `sext --help`. The full Roswell ->
+qlot -> build -> install pipeline, the version-resolution `git
+ls-remote` call, and the branch/tag/SHA clone fallback were all
+actually run end-to-end in this sandbox (built a real ~17MB working
+binary, ran `sext --help` successfully) before being committed -- only
+the composite-action YAML orchestration itself (`actions/cache@v4`
+semantics, `$GITHUB_PATH`/`$GITHUB_OUTPUT`, input interpolation)
+couldn't be verified, since no real GitHub Actions runner is available
+here. Noted honestly in the repo's own commit message and README: a
+real workflow run is still needed to confirm that part end-to-end.
+
+**`denzuko/sext`'s own action** -- `action.yml` at this repo's root
+(no new repo needed; referenced as `uses: denzuko/sext@develop`).
+Accepts `source` (a file *or* a directory) and `output`, since the
+issue's own pipeline example shows `source: ./src` (a directory) but
+the `sext` binary only ever dumps one file. Combines multiple files'
+output as `[{"file": ..., "ast": [...]}, ...]` -- grouped by file,
+*not* a flat merge of the per-file arrays, because each file's AST
+node `id` numbering restarts at 1 independently (documented in
+`docs/schema.md`'s "IDs are stable within a single dump" line) and
+flattening would silently produce colliding, misleading IDs. For a
+file that fails to dump (issue #14's limitation in practice -- most
+real multi-file directories will hit this on at least one file),
+records `{"file": ..., "error": ...}` and continues with the rest by
+default, rather than aborting the whole action; a `fail-on-error`
+input opts into strict fail-fast instead. The exact bash combining
+logic (including the hand-assembled JSON -- one entry per file, comma
+placement, the success/failure branches) was extracted to a standalone
+script and actually run against a real three-file test directory (two
+dumpable, one deliberately hitting issue #14) before being placed in
+`action.yml`; the resulting output was validated as well-formed JSON
+with `python3 -m json.tool`, not just assumed correct from reading the
+bash. `docs/schema.md` and the README both updated to document this
+action's distinct (file-grouped) output shape, separately from the
+binary's own per-file schema.

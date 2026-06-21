@@ -71,6 +71,30 @@ qlot exec ros build roswell/sext.ros
 `ros install denzuko/sext` (a one-line install for end users, no local
 clone needed) isn't available yet -- it needs a tagged release first.
 
+## Use in CI
+
+Two GitHub Actions, meant to be used together:
+[`denzuko/setup-sext`](https://github.com/denzuko/setup-sext) installs
+the `sext` binary (building from source, since there's no tagged
+release yet); the `denzuko/sext` action (`action.yml` at this repo's
+root) then runs it against a file or a whole directory and writes
+combined JSON output.
+
+```yaml
+- uses: denzuko/setup-sext@main
+- uses: denzuko/sext@develop
+  with:
+    source: ./src
+    output: ast-output.json
+- run: opa eval -i ast-output.json -d ./policy "data.main.deny" --fail-defined
+```
+
+See `docs/schema.md`'s last section for the action's combined output
+shape (one entry per file, distinct from the binary's own per-file
+schema documented above it), and the `denzuko/sext#14` limitation
+note above -- it affects how much of a real multi-file `source`
+directory will dump cleanly today.
+
 ## Scope boundary
 
 `sext` ships example/reference policies (`policy/examples/`) to prove

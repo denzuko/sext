@@ -218,3 +218,31 @@ exactly this reason -- a Rego policy author relying on field names
 documented here should check `qlfile`'s pinned Cleavir commit when
 diagnosing an unexpected schema change, not assume `sext` itself
 changed.
+
+## The `denzuko/sext` GitHub Action's output shape (distinct from the above)
+
+Everything above describes what the `sext` *binary* itself produces
+for one file. The `denzuko/sext` GitHub Action (`action.yml` at this
+repo's root -- see the pipeline example in issue #11) wraps that
+per-file output to support a `source` input that's a whole directory,
+not just one file, since the binary itself only ever dumps a single
+file. The action's combined output is a *different*, outer JSON shape:
+
+```json
+[
+  {"file": "src/foo.lisp", "ast": [ ... the per-file array documented above ... ]},
+  {"file": "src/bar.lisp", "error": "sext: failed to parse source: ..."}
+]
+```
+
+One entry per `.lisp` file found, each either `{"file", "ast"}` (the
+file dumped successfully -- `ast` is exactly the binary's normal
+per-file output array) or `{"file", "error"}` (it didn't -- by default
+the action continues past per-file failures rather than aborting,
+since the issue #14 limitation above means a non-trivial fraction of
+real multi-file directories will currently fail on at least one file).
+**`id` numbering is local to each entry's own `ast` array, not global
+across the combined output** -- two different files' nodes can both be
+`"id": 1` with no relationship to each other; a Rego policy walking
+the combined output needs to resolve `{"ref": id}` back-references
+within the same `file` entry's `ast`, never across entries.
