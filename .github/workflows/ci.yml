@@ -113,8 +113,25 @@ jobs:
         with:
           asdf-system: sext
       - name: Build sext binary via Roswell
+        # MUST be `qlot exec ros build`, not a bare `ros build` --
+        # 40ants/setup-lisp@v4's `qlot install` (run as part of that
+        # action, against this repo's own qlfile) installs dependencies
+        # into a project-local .qlot/ client, not the global Roswell-
+        # managed Quicklisp client. A bare `ros build` only sees the
+        # global client, which has no knowledge of .qlot/'s locally
+        # installed concrete-syntax-tree/Cleavir/etc. -- confirmed
+        # directly via a real failing CI run (2026-06-21):
+        # ASDF/FIND-COMPONENT:MISSING-DEPENDENCY :REQUIRES
+        # "concrete-syntax-tree", even though the sibling unit-tests
+        # job (which goes through 40ants/run-tests@v2, itself
+        # qlot-aware) found the exact same dependency fine in the same
+        # run. This bug was invisible to all local verification this
+        # session, since the local sandbox also had these libraries
+        # installed into ITS OWN global Quicklisp client from earlier,
+        # unrelated work, masking the gap a genuinely fresh runner
+        # exposes.
         run: |
-          ros build roswell/sext.ros
+          qlot exec ros build roswell/sext.ros
       - name: Verify binary
         run: |
           ./roswell/sext --help
