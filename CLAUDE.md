@@ -551,3 +551,201 @@ caused by it.
 Remaining open work: issue #7 (Roswell binary build), issue #8
 (40ants-ci linter wiring), issues #1/#2 (docs). None started.
 
+## Code review correction (2026-06-20): defun-returning-lambda anti-pattern
+
+Flagged in review: `%portable-incf/decf-expander` in
+`src/environment.lisp` was a `defun` whose entire body was a single
+`(lambda (form env) ...)`, used as a closure factory at two call sites
+(`'incf`/`'decf`) with a runtime `ecase` inside the closure dispatching
+on a value that's actually fixed per call site. Since
+`CLEAVIR-ENVIRONMENT:FUNCTION-INFO` is looked up on every `INCF`/`DECF`
+form converted (not once at load time), this meant a fresh closure
+allocation plus a re-checked branch on every single use — overhead for
+a branch whose outcome never varies for a given call site, and the
+only expander in the file that wasn't a plain named function
+referenced via `#'` (worse for debuggability too: anonymous
+closures-from-factories don't show up by name in backtraces).
+
+**Fix**: replaced with `%define-portable-incf/decf-expander`, a
+`defmacro` generating two separately-named, statically-specialized
+functions (`%portable-incf-expander`, `%portable-decf-expander`) with
+the arithmetic operator baked in as a literal at definition time via
+the standard nested-backquote `,',x` idiom — verified directly
+(`macroexpand-1` + functional test of both generated functions plus
+the error path) before trusting it, not just inspected. Call sites
+updated to `#'%portable-incf-expander`/`#'%portable-decf-expander`,
+consistent with every other entry in the dispatch table. All 16 BDD
+checks still pass; `environment.lisp` still compiles with zero
+warnings.
+
+General principle this corrects toward: when a function's "shape" is
+parameterized by something known at the point the code is *written*
+(here: there are only ever two instantiations, INCF and DECF, and
+which one applies is fixed per call site), prefer a macro generating
+named definitions over a runtime closure-returning factory with an
+internal runtime branch on that fixed parameter.
+
+## Issue #7 notes (2026-06-20): Roswell binary verification
+
+Verified by direct testing throughout -- Roswell 26.02.116 (bundled
+SBCL 2.6.5, a different version from this project's dev-sandbox SBCL
+2.2.9) and qlot 1.x installed via the official CI install script.
+Two real bugs found and fixed, both only catchable by actually running
+the tools, not by inspecting dist metadata by hand:
+
+**qlfile project-vs-system-name bug.** `ql <name>` in qlfile syntax
+takes a Quicklisp PROJECT name (per the dist's releases.txt), not
+necessarily an ASDF SYSTEM name -- the two only coincide when a
+release's primary system shares the release's name. A live
+`qlot install` against this repo's qlfile failed repeatedly on
+`com.inuoe.jzon` and `khazern-extrinsic`, even though both names
+appear as valid system-names in the dist's systems.txt (which lists
+every system a release provides, without making the project/system
+distinction obvious -- checking systems.txt by hand wasn't enough to
+catch this). Confirmed via releases.txt: the "jzon" project ships
+`src/com.inuoe.jzon.asd`; the "eclector" project ships both
+`eclector.asd` and `eclector-concrete-syntax-tree.asd` in the same
+tarball; the "khazern" project ships both `khazern.asd` and
+`khazern-extrinsic.asd` in the same tarball. Fixed: `ql com.inuoe.jzon`
+-> `ql jzon`; the `ql eclector-concrete-syntax-tree` and
+`ql khazern-extrinsic` lines removed entirely as redundant -- once the
+parent project is `ql`'d, ASDF finds the sub-system on disk
+automatically, no separate qlfile line needed. sext.asd's own
+:depends-on list was correct all along and untouched (it's the ASDF
+SYSTEM-name namespace, a different thing from qlfile's project-name
+lookups). Verified: a clean `qlot install` against the fixed qlfile
+succeeds 8/8.
+
+**Standalone binary's SB-CLTL2 require failure, and the fix.**
+`ros build roswell/sext.ros` succeeded (exit 0, produced a real ELF
+binary) on the *first* attempt, with the original script structure
+(SEXT loaded inside MAIN, deferred until the binary is actually
+invoked with a file argument). But running that binary against a test
+file failed: `ASDF could not load sb-cltl2 because Don't know how to
+REQUIRE sb-cltl2` -- an unhandled SB-INT:EXTENSION-FAILURE, traced via
+full backtrace to src/environment.lisp's `(require :sb-cltl2)`.
+Root cause: `ros build` only compiles/saves the .ros script's own
+top-level forms (DEFPACKAGE, DEFUN MAIN) into the image -- it does NOT
+invoke MAIN during the build, so when SEXT's own load was deferred
+into MAIN, the SB-CLTL2 contrib module was never actually loaded into
+the saved image at all. It only got REQUIRE'd for the first time at
+actual runtime, inside the standalone saved/restored binary process --
+where the contrib-module-finding machinery doesn't behave the same way
+it does for a normal `ros`/`sbcl` invocation (confirmed by elimination:
+the exact same SEXT load, via `qlot exec ros -e '(asdf:load-system
+"sext")'` in an ordinary process, succeeds cleanly on the same Roswell
+SBCL 2.6.5 -- the difference is specifically the saved-and-restored
+standalone image, not the SBCL version or the code itself).
+
+Fixed: moved `(asdf:load-system :sext)` (and the central-registry
+push it depends on) out of MAIN and up to the script's own top level,
+so it runs eagerly whenever the script is loaded/compiled --
+including during `ros build`, which bakes SEXT and SB-CLTL2 into the
+saved image instead of deferring the load to first invocation. MAIN
+is now just `(funcall (find-symbol "MAIN" (find-package :sext))
+argv)`, nothing else. This also means `ros build` now surfaces any
+SEXT load-time error at build time (better CI signal) instead of
+deferring all error detection to first invocation, and MAIN no longer
+redoes ASDF's full dependency-graph walk on every single run.
+Re-verified after the fix: `ros build roswell/sext.ros` succeeds, and
+the resulting binary correctly reads a file path argument, writes
+valid (JSON-parser-checked) JSON to stdout, runs deterministically
+across repeated invocations, and exits 0.
+
+**`--help`/`-h` implemented** (src/main.lisp), removing the need for
+the `--help || true` escape hatch that was in the CI build job: prints
+usage to stdout and exits 0, checked anywhere in ARGS (not just first
+position, the common CLI convention) so it works even combined with
+other flags. No-args now also exits 1 with usage on *ERROR-OUTPUT*,
+rather than signalling an unhandled Lisp condition from PATHNAME on
+NIL. Both new behaviors covered by BDD specs (DUMP-14, DUMP-15);
+verified directly against the actual standalone binary, not just at
+the Lisp function level. All 21 BDD checks pass (FiveAM counts
+individual `is` assertions, not test names -- the two new tests add
+five assertions between them, bringing the prior 16 to 21).
+
+Remaining for issue #7: sub-item 3 (`ros install denzuko/sext` UX)
+needs a tagged release, which doesn't exist yet -- not started, and
+reasonably out of scope until a release is cut. Sub-items 1, 2, and 4
+are done and verified.
+
+## Issue #8 notes (2026-06-20): 40ants-ci linter/critic verification
+
+**Distribution mechanism, confirmed.** `40ants-ci/jobs/linter` and
+`jobs/critic` are NOT GitHub Actions to reference via `uses:` -- they're
+a Lisp-side workflow GENERATOR (a `defworkflow` DSL: e.g.
+`(defworkflow ci :jobs ((40ants-ci/jobs/linter:linter)
+(40ants-ci/jobs/critic:critic)))`) that PRODUCES `.github/workflows/*.yml`
+content; you run that Lisp code locally/once to generate the YAML, you
+don't reference 40ants-ci from inside a workflow at CI time. The YAML it
+generates uses `40ants/setup-lisp@v4` (checkout + Roswell/qlot setup,
+already in this workflow) followed by a plain `run: qlot exec sblint
+<asd-file>` step for the linter job, and an analogous Lisp Critic
+invocation for the critic job.
+
+**Why this job does NOT actually use `qlot exec`, despite that being
+the documented pattern.** Tried directly: `qlot exec sblint sext.asd`
+fails, because `qlot exec` swaps the whole Quicklisp CLIENT environment
+for that process to the project-local `.qlot/` one -- but sblint's own
+Roswell script needs to `(ql:quickload '(:sblint ...))` itself on
+startup (it's a thin wrapper, not pre-baked), and `:sblint` isn't a
+dependency of THIS project, so it's invisible inside the qlot-swapped
+environment. Tried calling sblint's internal API directly
+(`sblint/run-lint:run-lint-asd`) inside a `qlot exec ros -e` session
+instead, pushing sblint's `~/.roswell/local-projects/` path onto
+`asdf:*central-registry*` to route around the self-quickload problem:
+got further (sblint itself loads) but then hit `Component "swank" not
+found` -- sblint depends on swank, which (like sblint itself) isn't a
+dependency of this project and so isn't in qlot's local environment
+either. The fundamental tension: sblint/lisp-critic need access to
+BOTH their own tooling dependencies (global Quicklisp/Roswell
+environment) AND the target project's dependencies (Cleavir, only
+reachable via this project's qlot setup) -- two overlapping dependency
+graphs that don't compose cleanly when qlot's `exec` deliberately
+isolates one from the other.
+
+**The fix that works**: run sblint/lisp-critic normally, in the global
+Roswell/Quicklisp environment (where their own tooling dependencies
+resolve fine, exactly as confirmed by direct testing), and supply
+Cleavir's location via the `CL_SOURCE_REGISTRY` environment variable
+with `:inherit-configuration` -- this ADDS to the normal search path
+rather than replacing it, so sblint/lisp-critic keep finding their own
+deps from the global environment while ALSO finding Cleavir. Cleavir is
+fetched via a direct `git clone` to a fixed path for this job
+specifically (not qlot's hash-keyed cache path, which is fine for an
+interactive session but too fragile to hardcode into CI) -- a small
+amount of duplication (Cleavir gets fetched twice across the `lint` and
+`unit-tests`/`build` jobs) traded for robustness and avoiding a fight
+with qlot's isolation. Verified directly against the real sext system.
+
+**Lisp Critic: verified working end-to-end**, and a live run surfaced
+real evidence for the blocking-vs-advisory decision (issue #8 sub-item
+3): it flagged `CLEAVIR-ENVIRONMENT:EVAL`'s `(EVAL FORM)` call as
+`[evil-eval]` -- but that's a deliberate, already-documented design
+choice (src/main.lisp's `%CST-TO-AST` docstring, environment.lisp's
+"EVAL / CST-EVAL" section), not a real problem. Decided: **advisory**
+(`continue-on-error: true`), specifically because of this concrete
+false-positive, not just a generic "style tools should be advisory"
+policy -- idiom/style advice a human reviews, not a hard gate that
+would force working around legitimate, justified exceptions.
+
+**sblint: still genuinely broken, not yet root-caused.** Even with the
+CL_SOURCE_REGISTRY fix (which did resolve the original "cleavir-cst-
+to-ast not found" failure), a live run now hits a new, different
+failure: `Component "trinsic" not found`, traced via backtrace into
+sblint's own dependency walk of `khazern-extrinsic`. Checked the
+obvious explanation directly: `khazern-extrinsic.asd`'s own
+`:depends-on` is just `("khazern")` -- nothing resembling "trinsic"
+anywhere in it. Lisp Critic, run against the exact same sext system
+with the exact same CL_SOURCE_REGISTRY setup, does NOT hit this --
+ruling out qlot/Cleavir/khazern-extrinsic resolution in general as the
+cause and pointing at something specific to sblint's own
+PACKAGE-INFERRED-SYSTEM dependency-walking code
+(`sblint/utilities/asdf:all-required-systems`) interacting badly with
+khazern-extrinsic specifically. Not pursued further this session (real
+diminishing returns on a likely-upstream issue) -- wired into CI as
+**non-blocking** (`continue-on-error: true`) so it still surfaces
+output for a human to look at, but pending root-cause, not a permanent
+policy decision the way critic's advisory status is. Re-enable as
+blocking once root-caused.
+
