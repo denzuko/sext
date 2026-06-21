@@ -749,3 +749,66 @@ output for a human to look at, but pending root-cause, not a permanent
 policy decision the way critic's advisory status is. Re-enable as
 blocking once root-caused.
 
+## Issue #1 notes (2026-06-20): JSON schema documentation
+
+`docs/schema.md` written, derived directly from `src/walker.lisp` and
+Cleavir's own `CLEAVIR-IO:DEFINE-SAVE-INFO` declarations
+(`Abstract-syntax-tree/general-purpose-asts.lisp`) -- every per-type
+field table entry was checked directly against that source before
+being written, not transcribed from memory (caught and fixed one near-
+miss this way: double-checked `if-ast`'s exact fields, which turned
+out correct, but the discipline is the point). README updated to
+reference it and to drop the stale "pre-implementation" status
+language, which had drifted badly out of date relative to the actual
+state of the repo by this point in the session.
+
+**Real, previously-undiscovered limitation found and filed (issue
+#14)** while building a fixture for the example policy: `sext`
+currently can only successfully dump source where every called
+function is a standard/built-in CL function or already loaded into the
+running image -- not a function merely defined elsewhere in the same
+*file*, even earlier in the exact same `dump-string`/`dump-file` call.
+Verified directly: `(defun bar (x) x) (defun foo (x) (bar x))` fails
+identically to a call to a wholly-undefined function. Root cause:
+`%dump-forms-to-asts` converts each top-level form to an AST data
+structure, it never executes any of them, so an earlier `DEFUN`'s
+runtime `(setf (fdefinition ...))` effect never fires and Cleavir's
+compile-time environment never learns the function exists. This is
+deliberate, correct Cleavir behavior (real compilers need exactly this
+for inlining/type-checking), not a sext bug per se, but it's a real
+practical constraint on `sext`'s usefulness against ordinary multi-
+function source files, not just multi-file systems as originally
+suspected -- the issue was filed, then corrected via a follow-up
+comment once the more precise (same-file, not just cross-file) version
+of the finding was confirmed. Also flagged in the same issue:
+`dump-string`'s `handler-case` discards the real underlying condition
+entirely (`(declare (ignore e))`) before re-signalling a generic
+`SEXT-PARSE-ERROR`, making this kind of failure hard to diagnose from
+the CLI's error message alone.
+
+**Example policy fixed and, unlike before, actually verified.** The
+original `policy/examples/no_pre_wrapped_filter_args.rego` was
+explicit pseudocode against a speculative schema using field names
+(`operator`, `clauses`, `location`) that don't exist anywhere in the
+real schema (Cleavir's `COND` macroexpands to nested `IF-AST`s --
+there's no `cond-ast`/`clause`/`test` structure to match on at all).
+Rewritten against the real schema and shape (`call-ast`/`callee-ast`/
+`argument-asts`/`if-ast`/`test-ast`), and actually proven correct via
+`opa test` against two real, `sext`-produced fixtures (not just `opa
+eval`'d once by hand) -- `test/policy/fixtures/` plus a proper
+`*_test.rego` file, both passing. Caught and fixed two real Rego
+mistakes in the process, both via actually running `opa eval`/`opa
+test` rather than trusting the policy text on inspection: a Lisp-style
+`~`-continuation inside a string literal (not valid Rego syntax), and
+`form.callee-ast.type`-style dot-notation on a hyphenated key, which
+Rego parses as a subtraction expression (`callee - ast`) rather than
+field access -- needs bracket notation (`form["callee-ast"].type`) for
+any hyphenated key, throughout. The fixture itself uses
+`uiop:ensure-list` rather than the original bug's `invoke-filter-chain`
+name, specifically because of the issue #14 limitation just found
+(`invoke-filter-chain` isn't a real, already-loaded function); the
+policy's `canonical_disambiguators` set keeps both names so it's ready
+once #14 is resolved. Full rationale in `test/policy/README.md`.
+
+Issue #2 (40ants-doc `docs/index.lisp`) not yet started.
+
