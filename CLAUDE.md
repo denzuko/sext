@@ -729,23 +729,199 @@ false-positive, not just a generic "style tools should be advisory"
 policy -- idiom/style advice a human reviews, not a hard gate that
 would force working around legitimate, justified exceptions.
 
-**sblint: still genuinely broken, not yet root-caused.** Even with the
-CL_SOURCE_REGISTRY fix (which did resolve the original "cleavir-cst-
-to-ast not found" failure), a live run now hits a new, different
-failure: `Component "trinsic" not found`, traced via backtrace into
-sblint's own dependency walk of `khazern-extrinsic`. Checked the
-obvious explanation directly: `khazern-extrinsic.asd`'s own
-`:depends-on` is just `("khazern")` -- nothing resembling "trinsic"
-anywhere in it. Lisp Critic, run against the exact same sext system
-with the exact same CL_SOURCE_REGISTRY setup, does NOT hit this --
-ruling out qlot/Cleavir/khazern-extrinsic resolution in general as the
-cause and pointing at something specific to sblint's own
-PACKAGE-INFERRED-SYSTEM dependency-walking code
-(`sblint/utilities/asdf:all-required-systems`) interacting badly with
-khazern-extrinsic specifically. Not pursued further this session (real
-diminishing returns on a likely-upstream issue) -- wired into CI as
-**non-blocking** (`continue-on-error: true`) so it still surfaces
-output for a human to look at, but pending root-cause, not a permanent
-policy decision the way critic's advisory status is. Re-enable as
-blocking once root-caused.
+**sblint: was hitting a "trinsic" failure, now root-caused as a stale
+environment artifact, not a real bug.** Even with the CL_SOURCE_REGISTRY
+fix (which did resolve the original "cleavir-cst-to-ast not found"
+failure), an earlier live run hit `Component "trinsic" not found`,
+traced via backtrace into sblint's own dependency walk of
+`khazern-extrinsic`. Checked the obvious explanation directly:
+`khazern-extrinsic.asd`'s own `:depends-on` is just `("khazern")` --
+nothing resembling "trinsic" anywhere in it. Wired into CI as
+non-blocking pending root-cause, not as a permanent policy decision.
 
+**Re-investigated (2026-06-21) and resolved**: re-ran the exact CI
+command (`~/.roswell/bin/sblint sext.asd`, identical
+`CL_SOURCE_REGISTRY`) against a freshly reinstalled `sblint` and a
+fresh Cleavir clone, with `~/.cache/common-lisp` cleared to rule out a
+stale FASL cache -- passed cleanly, twice, exit 0 both times. The
+verbose log shows exactly why: `trinsic` is a real, legitimate
+transitive dependency, listed plainly among the 31 systems sblint
+loads (right after `khazern-extrinsic khazern`), not a missing
+component at all. The original failure was reproduced as
+*not*-reproducible against a fresh install/dist -- almost certainly a
+stale local Quicklisp dist or cache artifact specific to that earlier
+point in the session, not a real defect in this repo, in
+khazern-extrinsic, or in the CL_SOURCE_REGISTRY approach. Re-enabled as
+a blocking CI gate (`continue-on-error: true` removed).
+
+
+## Issue #1 notes (2026-06-20): JSON schema documentation
+
+`docs/schema.md` written, derived directly from `src/walker.lisp` and
+Cleavir's own `CLEAVIR-IO:DEFINE-SAVE-INFO` declarations
+(`Abstract-syntax-tree/general-purpose-asts.lisp`) -- every per-type
+field table entry was checked directly against that source before
+being written, not transcribed from memory (caught and fixed one near-
+miss this way: double-checked `if-ast`'s exact fields, which turned
+out correct, but the discipline is the point). README updated to
+reference it and to drop the stale "pre-implementation" status
+language, which had drifted badly out of date relative to the actual
+state of the repo by this point in the session.
+
+**Real, previously-undiscovered limitation found and filed (issue
+#14)** while building a fixture for the example policy: `sext`
+currently can only successfully dump source where every called
+function is a standard/built-in CL function or already loaded into the
+running image -- not a function merely defined elsewhere in the same
+*file*, even earlier in the exact same `dump-string`/`dump-file` call.
+Verified directly: `(defun bar (x) x) (defun foo (x) (bar x))` fails
+identically to a call to a wholly-undefined function. Root cause:
+`%dump-forms-to-asts` converts each top-level form to an AST data
+structure, it never executes any of them, so an earlier `DEFUN`'s
+runtime `(setf (fdefinition ...))` effect never fires and Cleavir's
+compile-time environment never learns the function exists. This is
+deliberate, correct Cleavir behavior (real compilers need exactly this
+for inlining/type-checking), not a sext bug per se, but it's a real
+practical constraint on `sext`'s usefulness against ordinary multi-
+function source files, not just multi-file systems as originally
+suspected -- the issue was filed, then corrected via a follow-up
+comment once the more precise (same-file, not just cross-file) version
+of the finding was confirmed. Also flagged in the same issue:
+`dump-string`'s `handler-case` discards the real underlying condition
+entirely (`(declare (ignore e))`) before re-signalling a generic
+`SEXT-PARSE-ERROR`, making this kind of failure hard to diagnose from
+the CLI's error message alone.
+
+**Example policy fixed and, unlike before, actually verified.** The
+original `policy/examples/no_pre_wrapped_filter_args.rego` was
+explicit pseudocode against a speculative schema using field names
+(`operator`, `clauses`, `location`) that don't exist anywhere in the
+real schema (Cleavir's `COND` macroexpands to nested `IF-AST`s --
+there's no `cond-ast`/`clause`/`test` structure to match on at all).
+Rewritten against the real schema and shape (`call-ast`/`callee-ast`/
+`argument-asts`/`if-ast`/`test-ast`), and actually proven correct via
+`opa test` against two real, `sext`-produced fixtures (not just `opa
+eval`'d once by hand) -- `test/policy/fixtures/` plus a proper
+`*_test.rego` file, both passing. Caught and fixed two real Rego
+mistakes in the process, both via actually running `opa eval`/`opa
+test` rather than trusting the policy text on inspection: a Lisp-style
+`~`-continuation inside a string literal (not valid Rego syntax), and
+`form.callee-ast.type`-style dot-notation on a hyphenated key, which
+Rego parses as a subtraction expression (`callee - ast`) rather than
+field access -- needs bracket notation (`form["callee-ast"].type`) for
+any hyphenated key, throughout. The fixture itself uses
+`uiop:ensure-list` rather than the original bug's `invoke-filter-chain`
+name, specifically because of the issue #14 limitation just found
+(`invoke-filter-chain` isn't a real, already-loaded function); the
+policy's `canonical_disambiguators` set keeps both names so it's ready
+once #14 is resolved. Full rationale in `test/policy/README.md`.
+
+Issue #2 (40ants-doc `docs/index.lisp`) not yet started.
+
+## Issue #2 notes (2026-06-21): 40ants-doc integration
+
+`docs/index.lisp` written: `@sext-manual` (top-level section, README-
+style pitch plus links to `docs/schema.md` and `policy/examples/`) and
+`@sext-api` (locatives for the actual exported API -- `dump-string`,
+`dump-file`, `main`, and the three condition types -- checked against
+`src/package.lisp`'s real `:export` list, not assumed). Verified by
+actually loading the `sext/doc` ASDF system (which was previously
+declared but broken -- the component it names didn't exist) rather
+than just writing plausible-looking `DEFSECTION` syntax and trusting
+it: confirms both sections bind correctly. Note for whoever next
+builds HTML/Markdown output from this: `40ants-doc` alone (what
+`sext/doc` depends on) only provides `DEFSECTION` and the
+cross-reference machinery; actually rendering to files needs the
+separate, heavier `40ants-doc-full` system (markdown parser and other
+deps `40ants-doc` deliberately doesn't pull in by default) -- noted
+directly in `docs/index.lisp`'s own header rather than left implicit.
+
+## Issue #11 notes (2026-06-21): GitHub Actions
+
+Two actions, matching the issue's own description ("first installs
+the sext binary the second consumes it"):
+
+**`denzuko/setup-sext`** -- a new, separate repo (standard
+`actions/setup-X` convention; created with the same PAT used
+throughout this session, confirmed via a throwaway probe repo it has
+repo-creation rights before committing to the real one). Composite
+action: installs Roswell + qlot if missing, resolves the `version`
+input (branch/tag/SHA) to a commit SHA via `git ls-remote` for a
+stable `actions/cache@v4` key (so it doesn't go stale against a moving
+branch, and doesn't rebuild every run against an unchanged target),
+clones+builds via `qlot install` + `qlot exec ros build
+roswell/sext.ros` (with a tested fallback from a shallow `--branch`
+clone to a full clone + checkout, for when `version` is a raw commit
+SHA rather than a named ref -- `--branch` only accepts refs), installs
+to `~/.local/bin`, verifies via `sext --help`. The full Roswell ->
+qlot -> build -> install pipeline, the version-resolution `git
+ls-remote` call, and the branch/tag/SHA clone fallback were all
+actually run end-to-end in this sandbox (built a real ~17MB working
+binary, ran `sext --help` successfully) before being committed -- only
+the composite-action YAML orchestration itself (`actions/cache@v4`
+semantics, `$GITHUB_PATH`/`$GITHUB_OUTPUT`, input interpolation)
+couldn't be verified, since no real GitHub Actions runner is available
+here. Noted honestly in the repo's own commit message and README: a
+real workflow run is still needed to confirm that part end-to-end.
+
+**`denzuko/sext`'s own action** -- `action.yml` at this repo's root
+(no new repo needed; referenced as `uses: denzuko/sext@develop`).
+Accepts `source` (a file *or* a directory) and `output`, since the
+issue's own pipeline example shows `source: ./src` (a directory) but
+the `sext` binary only ever dumps one file. Combines multiple files'
+output as `[{"file": ..., "ast": [...]}, ...]` -- grouped by file,
+*not* a flat merge of the per-file arrays, because each file's AST
+node `id` numbering restarts at 1 independently (documented in
+`docs/schema.md`'s "IDs are stable within a single dump" line) and
+flattening would silently produce colliding, misleading IDs. For a
+file that fails to dump (issue #14's limitation in practice -- most
+real multi-file directories will hit this on at least one file),
+records `{"file": ..., "error": ...}` and continues with the rest by
+default, rather than aborting the whole action; a `fail-on-error`
+input opts into strict fail-fast instead. The exact bash combining
+logic (including the hand-assembled JSON -- one entry per file, comma
+placement, the success/failure branches) was extracted to a standalone
+script and actually run against a real three-file test directory (two
+dumpable, one deliberately hitting issue #14) before being placed in
+`action.yml`; the resulting output was validated as well-formed JSON
+with `python3 -m json.tool`, not just assumed correct from reading the
+bash. `docs/schema.md` and the README both updated to document this
+action's distinct (file-grouped) output shape, separately from the
+binary's own per-file schema.
+
+## Repo hygiene (2026-06-21): LICENSE file
+
+README.md and `sext.asd` both claimed BSD-2-Clause throughout this
+whole session, but no `LICENSE` file actually existed in the repo --
+a real gap (no license file means GitHub's own license detection has
+nothing to find, and downstream consumers have no actual license text
+to point to). Added standard BSD-2-Clause text. Noted, not acted on:
+`qlfile.lock` is `.gitignore`'d (`*.lock` pattern) -- this looks like
+a deliberate existing project convention from before this session, not
+something introduced here, so left alone rather than second-guessed;
+worth flagging that it sits in some tension with docs/schema.md's
+"qlfile pins Cleavir to a specific git commit for reproducibility"
+framing, since the regular Quicklisp-dist-sourced deps (jzon, etc.)
+aren't pinned the same way without a committed lock file.
+
+## Issue #14 follow-up (2026-06-21): a third design option
+
+Posted a design analysis on the issue rather than picking a direction
+unilaterally. Grounded in actually reading `src/environment.lisp`'s
+`FUNCTION-INFO` method (not speculation): it delegates straight to
+`SB-CLTL2:FUNCTION-INFORMATION`, returning `NIL` -- fatal to Cleavir's
+CST-to-AST converter -- whenever SBCL itself has no knowledge of a
+name. Proposed a third option alongside the issue's original two (load
+the whole system first, vs. accept single-form scope): a cheap
+pre-declaration pass that just *reads* (never executes) every
+`DEFUN`/`DEFGENERIC` name across the unit being dumped and extends
+`FUNCTION-INFO` (already a generic function, already has an `:AROUND`
+precedent for `INCF`/`DECF`) to synthesize a `GLOBAL-FUNCTION-INFO` for
+any pre-collected name, without requiring it to be genuinely fbound.
+Resolves the same-file (and, extended across files, cross-file) case
+without ever running arbitrary source as a side effect of dumping its
+AST -- which matters more for a tool whose deployment context is
+security/policy-gate tooling than it would for an ordinary dev tool.
+Flagged as the most promising of the three on safety/cost grounds, not
+implemented -- still needs a direction decision before any of the
+three gets built.

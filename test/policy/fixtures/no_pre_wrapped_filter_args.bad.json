@@ -1,0 +1,366 @@
+{
+  "bad_ast": [
+    {
+      "id": 1,
+      "type": "progn-ast",
+      "origin": [
+        "progn",
+        [
+          "setf",
+          [
+            "fdefinition",
+            [
+              "quote",
+              "configure-filter"
+            ]
+          ],
+          [
+            "lambda",
+            [
+              "raw-value"
+            ],
+            [
+              "block",
+              "configure-filter",
+              [
+                "ensure-list",
+                [
+                  "if",
+                  [
+                    "listp",
+                    "raw-value"
+                  ],
+                  "raw-value",
+                  [
+                    "list",
+                    "raw-value"
+                  ]
+                ]
+              ]
+            ]
+          ]
+        ],
+        [
+          "quote",
+          "configure-filter"
+        ]
+      ],
+      "policy": false,
+      "form-asts": [
+        {
+          "id": 2,
+          "type": "progn-ast",
+          "origin": "new1485",
+          "policy": false,
+          "form-asts": [
+            {
+              "id": 3,
+              "type": "lexical-bind-ast",
+              "origin": "new1485",
+              "policy": false,
+              "lexical-variable": {
+                "id": 4,
+                "type": "lexical-variable",
+                "origin": "new1485",
+                "policy": false,
+                "name": "new1485"
+              },
+              "value-ast": {
+                "id": 5,
+                "type": "function-ast",
+                "origin": [
+                  "function",
+                  [
+                    "lambda",
+                    [
+                      "raw-value"
+                    ],
+                    [
+                      "block",
+                      "configure-filter",
+                      [
+                        "ensure-list",
+                        [
+                          "if",
+                          [
+                            "listp",
+                            "raw-value"
+                          ],
+                          "raw-value",
+                          [
+                            "list",
+                            "raw-value"
+                          ]
+                        ]
+                      ]
+                    ]
+                  ]
+                ],
+                "policy": false,
+                "lambda-list": [
+                  {
+                    "id": 6,
+                    "type": "lexical-variable",
+                    "origin": "raw-value",
+                    "policy": false,
+                    "name": "raw-value"
+                  }
+                ],
+                "body-ast": {
+                  "id": 7,
+                  "type": "progn-ast",
+                  "origin": "raw-value",
+                  "policy": false,
+                  "form-asts": [
+                    {
+                      "id": 8,
+                      "type": "lexical-bind-ast",
+                      "origin": "raw-value",
+                      "policy": false,
+                      "lexical-variable": {
+                        "id": 9,
+                        "type": "lexical-variable",
+                        "origin": "raw-value",
+                        "policy": false,
+                        "name": "raw-value"
+                      },
+                      "value-ast": {
+                        "id": 10,
+                        "type": "lexical-ast",
+                        "origin": "raw-value",
+                        "policy": false,
+                        "lexical-variable": {
+                          "ref": 6
+                        }
+                      },
+                      "ignore": false
+                    },
+                    {
+                      "id": 11,
+                      "type": "block-ast",
+                      "origin": [
+                        "block",
+                        "configure-filter",
+                        [
+                          "ensure-list",
+                          [
+                            "if",
+                            [
+                              "listp",
+                              "raw-value"
+                            ],
+                            "raw-value",
+                            [
+                              "list",
+                              "raw-value"
+                            ]
+                          ]
+                        ]
+                      ],
+                      "policy": false,
+                      "name": "configure-filter",
+                      "body-ast": {
+                        "id": 12,
+                        "type": "call-ast",
+                        "origin": [
+                          "ensure-list",
+                          [
+                            "if",
+                            [
+                              "listp",
+                              "raw-value"
+                            ],
+                            "raw-value",
+                            [
+                              "list",
+                              "raw-value"
+                            ]
+                          ]
+                        ],
+                        "policy": false,
+                        "callee-ast": {
+                          "id": 13,
+                          "type": "constant-fdefinition-ast",
+                          "origin": "ensure-list",
+                          "policy": false,
+                          "name": "ensure-list",
+                          "attributes": false
+                        },
+                        "argument-asts": [
+                          {
+                            "id": 14,
+                            "type": "if-ast",
+                            "origin": [
+                              "if",
+                              [
+                                "listp",
+                                "raw-value"
+                              ],
+                              "raw-value",
+                              [
+                                "list",
+                                "raw-value"
+                              ]
+                            ],
+                            "policy": false,
+                            "test-ast": {
+                              "id": 15,
+                              "type": "call-ast",
+                              "origin": [
+                                "listp",
+                                "raw-value"
+                              ],
+                              "policy": false,
+                              "callee-ast": {
+                                "id": 16,
+                                "type": "constant-fdefinition-ast",
+                                "origin": "listp",
+                                "policy": false,
+                                "name": "listp",
+                                "attributes": false
+                              },
+                              "argument-asts": [
+                                {
+                                  "id": 17,
+                                  "type": "lexical-ast",
+                                  "origin": "raw-value",
+                                  "policy": false,
+                                  "lexical-variable": {
+                                    "ref": 9
+                                  }
+                                }
+                              ],
+                              "inline": false
+                            },
+                            "then-ast": {
+                              "id": 18,
+                              "type": "lexical-ast",
+                              "origin": "raw-value",
+                              "policy": false,
+                              "lexical-variable": {
+                                "ref": 9
+                              }
+                            },
+                            "else-ast": {
+                              "id": 19,
+                              "type": "call-ast",
+                              "origin": [
+                                "list",
+                                "raw-value"
+                              ],
+                              "policy": false,
+                              "callee-ast": {
+                                "id": 20,
+                                "type": "constant-fdefinition-ast",
+                                "origin": "list",
+                                "policy": false,
+                                "name": "list",
+                                "attributes": false
+                              },
+                              "argument-asts": [
+                                {
+                                  "id": 21,
+                                  "type": "lexical-ast",
+                                  "origin": "raw-value",
+                                  "policy": false,
+                                  "lexical-variable": {
+                                    "ref": 9
+                                  }
+                                }
+                              ],
+                              "inline": false
+                            }
+                          }
+                        ],
+                        "inline": false
+                      }
+                    }
+                  ]
+                },
+                "name": false,
+                "docstring": false,
+                "bound-declarations": false,
+                "original-lambda-list": [
+                  "raw-value"
+                ],
+                "attributes": false
+              },
+              "ignore": false
+            },
+            {
+              "id": 22,
+              "type": "call-ast",
+              "origin": [
+                "funcall",
+                [
+                  "function",
+                  [
+                    "setf",
+                    "fdefinition"
+                  ]
+                ],
+                "new1485",
+                [
+                  "quote",
+                  "configure-filter"
+                ]
+              ],
+              "policy": false,
+              "callee-ast": {
+                "id": 23,
+                "type": "constant-fdefinition-ast",
+                "origin": "funcall",
+                "policy": false,
+                "name": "funcall",
+                "attributes": false
+              },
+              "argument-asts": [
+                {
+                  "id": 24,
+                  "type": "constant-fdefinition-ast",
+                  "origin": [
+                    "function",
+                    [
+                      "setf",
+                      "fdefinition"
+                    ]
+                  ],
+                  "policy": false,
+                  "name": [
+                    "setf",
+                    "fdefinition"
+                  ],
+                  "attributes": false
+                },
+                {
+                  "id": 25,
+                  "type": "lexical-ast",
+                  "origin": "new1485",
+                  "policy": false,
+                  "lexical-variable": {
+                    "ref": 4
+                  }
+                },
+                {
+                  "id": 26,
+                  "type": "constant-ast",
+                  "origin": "configure-filter",
+                  "policy": false,
+                  "value": "configure-filter"
+                }
+              ],
+              "inline": false
+            }
+          ]
+        },
+        {
+          "id": 27,
+          "type": "constant-ast",
+          "origin": "configure-filter",
+          "policy": false,
+          "value": "configure-filter"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,111 @@
+name: 'sext'
+description: >-
+  Dump Common Lisp source (a single file, or every .lisp file in a
+  directory) to a combined JSON AST file, for piping into OPA/Rego,
+  SARIF, or CycloneDX tooling. Assumes the sext binary is already on
+  PATH -- run denzuko/setup-sext before this action.
+author: 'Dwight Spencer <denzuko@dapla.net>'
+branding:
+  icon: 'code'
+  color: 'purple'
+
+inputs:
+  source:
+    description: 'Path to a .lisp file, or a directory to recursively dump every .lisp file in'
+    required: true
+  output:
+    description: 'Path to write the combined JSON output to'
+    required: true
+  fail-on-error:
+    description: >-
+      Fail the whole action if any file fails to dump, instead of
+      recording a per-file error and continuing. Default false,
+      because sext currently can only dump source where every called
+      function is a standard/built-in CL function or already loaded
+      into the running image -- not a function merely defined
+      elsewhere in the same project (see issue #14) -- which is common
+      enough in real multi-file source that fail-fast would make this
+      action unusable for most real directories today.
+    required: false
+    default: 'false'
+
+outputs:
+  files-dumped:
+    description: 'Number of files successfully dumped'
+    value: ${{ steps.run.outputs.files-dumped }}
+  files-failed:
+    description: 'Number of files that failed to dump (see issue #14)'
+    value: ${{ steps.run.outputs.files-failed }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Check sext is on PATH
+      shell: bash
+      run: |
+        if ! command -v sext >/dev/null 2>&1; then
+          echo "::error::sext not found on PATH -- run denzuko/setup-sext before this action"
+          exit 1
+        fi
+
+    - name: Dump source
+      id: run
+      shell: bash
+      run: |
+        set -u
+        source_path="${{ inputs.source }}"
+        output_path="${{ inputs.output }}"
+        fail_on_error="${{ inputs.fail-on-error }}"
+
+        if [ -f "$source_path" ]; then
+          files=("$source_path")
+        elif [ -d "$source_path" ]; then
+          mapfile -t files < <(find "$source_path" -type f -name '*.lisp' | sort)
+        else
+          echo "::error::source '$source_path' is neither a file nor a directory"
+          exit 1
+        fi
+
+        if [ "${#files[@]}" -eq 0 ]; then
+          echo "::error::no .lisp files found under '$source_path'"
+          exit 1
+        fi
+
+        dumped=0
+        failed=0
+        first=1
+
+        echo "[" > "$output_path"
+        for f in "${files[@]}"; do
+          if ast=$(sext "$f" 2>/tmp/sext-action-err.txt); then
+            entry=$(printf '{"file": %s, "ast": %s}' \
+              "$(python3 -c "import json,sys;print(json.dumps(sys.argv[1]))" "$f")" \
+              "$ast")
+            dumped=$((dumped + 1))
+          else
+            err=$(cat /tmp/sext-action-err.txt)
+            entry=$(python3 -c "
+import json, sys
+print(json.dumps({'file': sys.argv[1], 'error': sys.argv[2]}))
+" "$f" "$err")
+            failed=$((failed + 1))
+            if [ "$fail_on_error" = "true" ]; then
+              echo "::error::failed to dump $f: $err"
+              rm -f "$output_path"
+              exit 1
+            else
+              echo "::warning::failed to dump $f: $err"
+            fi
+          fi
+          if [ "$first" -eq 1 ]; then
+            first=0
+          else
+            echo "," >> "$output_path"
+          fi
+          echo "$entry" >> "$output_path"
+        done
+        echo "]" >> "$output_path"
+
+        echo "files-dumped=$dumped" >> "$GITHUB_OUTPUT"
+        echo "files-failed=$failed" >> "$GITHUB_OUTPUT"
+        echo "Dumped $dumped file(s) to $output_path, $failed failed."
