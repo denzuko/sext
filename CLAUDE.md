@@ -729,30 +729,59 @@ false-positive, not just a generic "style tools should be advisory"
 policy -- idiom/style advice a human reviews, not a hard gate that
 would force working around legitimate, justified exceptions.
 
-**sblint: was hitting a "trinsic" failure, now root-caused as a stale
-environment artifact, not a real bug.** Even with the CL_SOURCE_REGISTRY
+**sblint: still genuinely broken, this time properly root-caused via a
+real CI run, not local re-testing.** Even with the CL_SOURCE_REGISTRY
 fix (which did resolve the original "cleavir-cst-to-ast not found"
-failure), an earlier live run hit `Component "trinsic" not found`,
-traced via backtrace into sblint's own dependency walk of
-`khazern-extrinsic`. Checked the obvious explanation directly:
-`khazern-extrinsic.asd`'s own `:depends-on` is just `("khazern")` --
-nothing resembling "trinsic" anywhere in it. Wired into CI as
-non-blocking pending root-cause, not as a permanent policy decision.
+failure), a live run hits `Component "trinsic" not found`, traced via
+backtrace into sblint's own dependency walk of `khazern-extrinsic`.
+Checked the obvious explanation directly: `khazern-extrinsic.asd`'s own
+`:depends-on` is just `("khazern")` -- nothing resembling "trinsic"
+anywhere in it. Wired into CI as non-blocking pending root-cause, not
+as a permanent policy decision.
 
-**Re-investigated (2026-06-21) and resolved**: re-ran the exact CI
-command (`~/.roswell/bin/sblint sext.asd`, identical
-`CL_SOURCE_REGISTRY`) against a freshly reinstalled `sblint` and a
-fresh Cleavir clone, with `~/.cache/common-lisp` cleared to rule out a
-stale FASL cache -- passed cleanly, twice, exit 0 both times. The
-verbose log shows exactly why: `trinsic` is a real, legitimate
-transitive dependency, listed plainly among the 31 systems sblint
-loads (right after `khazern-extrinsic khazern`), not a missing
-component at all. The original failure was reproduced as
-*not*-reproducible against a fresh install/dist -- almost certainly a
-stale local Quicklisp dist or cache artifact specific to that earlier
-point in the session, not a real defect in this repo, in
-khazern-extrinsic, or in the CL_SOURCE_REGISTRY approach. Re-enabled as
-a blocking CI gate (`continue-on-error: true` removed).
+**A same-day local re-test wrongly concluded this was resolved** --
+re-ran the exact CI command against a freshly reinstalled `sblint` and
+a fresh Cleavir clone, with `~/.cache/common-lisp` cleared, and it
+passed cleanly twice. That re-test was itself unreliable: the local
+sandbox still had cached Quicklisp dist *metadata* (not just FASLs)
+from much earlier, unrelated work in the same session, which a fresh
+GitHub Actions runner doesn't have -- clearing `~/.cache/common-lisp`
+ruled out stale compiled output but not stale dist-resolution state.
+Committed and merged sblint back as a blocking gate on the strength of
+that flawed local result, without ever checking a real CI run.
+
+**Corrected (2026-06-21, later the same day), after actually checking
+real GitHub Actions run logs via the API** for the first time this
+session (prompted by trying to verify issue #11's two actions end to
+end, which surfaced that CI itself had several genuine, undetected
+failures -- see the LISP-env-var and qlot-exec-build fixes elsewhere in
+this file). A real run reproduced the "trinsic" failure again, with a
+full backtrace this time:
+`SBLINT/UTILITIES/ASDF:ALL-REQUIRED-SYSTEMS` walks `"sext"` ->
+`"khazern-extrinsic"` -> `"khazern"`, then asks ASDF to
+`FIND-SYSTEM`/`DIRECT-DEPENDENCIES` on `"khazern"`, which somehow
+resolves to looking for a system literally named `"trinsic"`. Likely
+explanation, given `"trinsic"` is exactly `"extrinsic"` with `"ex"`
+stripped off the front: a package-inferred-system name-splitting bug
+in sblint's own dependency walker, specifically triggered by a system
+name containing "extrinsic" as a substring -- not a problem in this
+repo, khazern-extrinsic, or the CL_SOURCE_REGISTRY setup, and not
+something fixable from this side without either an upstream sblint fix
+or a different dependency-walking strategy. Reverted back to
+non-blocking (`continue-on-error: true` restored) -- for real this
+time, verified against an actual GitHub Actions run, not local
+re-testing.
+
+**The lesson, stated plainly**: this whole session's verification had
+relied entirely on local sandbox testing, which never once exercised
+the actual `40ants/setup-lisp@v4`-based dependency installation CI
+uses, and accumulated cached Quicklisp/dist state across many hours of
+unrelated work that a fresh runner never has. Local verification is
+necessary but not sufficient for anything CI-shaped; checking real
+workflow run results via the GitHub Actions API is the only thing that
+actually confirms CI works, and should have been done much earlier and
+more routinely throughout this session, not just once issue #11's own
+verification need surfaced the gap.
 
 
 ## Issue #1 notes (2026-06-20): JSON schema documentation
