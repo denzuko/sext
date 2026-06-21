@@ -1,5 +1,18 @@
 name: CI
 
+# LISP must be set explicitly -- 40ants/setup-lisp@v4's own docs claim
+# it defaults to sbcl when unset, but a real run (2026-06-21) showed
+# its own internal self-check step ("Checking if we installed correct
+# Lisp implementation", test.ros) hard-failing with "Env variable LISP
+# was not set." before any of this workflow's own steps even ran --
+# discovered only by actually checking real GitHub Actions run logs
+# via the API, not from any local verification (which never exercises
+# 40ants/setup-lisp@v4 at all). Every working example in the action's
+# own documentation sets this explicitly too, so this isn't relying on
+# undocumented behavior.
+env:
+  LISP: sbcl-bin
+
 on:
   push:
     branches: ["main", "develop", "feat/**", "fix/**", "chore/**", "refactor/**", "ci/**"]
@@ -58,20 +71,33 @@ jobs:
         run: |
           ros install fukamachi/sblint
           ros install 40ants/40ants-critic
-      # Was non-blocking pending investigation of a `Component "trinsic"
-      # not found` failure, traced into sblint's own khazern-extrinsic
-      # dependency walk. Re-investigated (2026-06-21): "trinsic" is a
-      # real, legitimate transitive dependency -- it appears in
-      # sblint's own normal "Loading N systems" list on a clean run,
-      # right after khazern-extrinsic/khazern, not as a missing
-      # component. The earlier failure was reproduced not being
-      # reproducible against a fresh sblint install/Quicklisp dist
-      # (re-installed sblint, cleared ~/.cache/common-lisp, re-ran
-      # against the exact CI command/CL_SOURCE_REGISTRY twice) -- almost
-      # certainly a stale local dist/cache artifact from earlier in
-      # that session, not a real bug in this repo or in the
-      # CL_SOURCE_REGISTRY approach itself. Re-enabled as blocking.
-      - name: Lint with sblint
+      # CORRECTING AN EARLIER MISTAKE (2026-06-21, later same day): this
+      # was briefly re-enabled as blocking based on local re-testing
+      # that seemed to show the "trinsic" failure wasn't reproducible.
+      # That local re-test was itself unreliable -- the local sandbox
+      # had cached Quicklisp dist state from much earlier, unrelated
+      # work in the same session, masking exactly the kind of gap a
+      # genuinely fresh environment exposes. A real CI run (this same
+      # day, after the LISP-env-var and qlot-exec-build fixes got
+      # unit-tests and build passing for real) reproduced the failure
+      # again, with a full backtrace this time:
+      # SBLINT/UTILITIES/ASDF:ALL-REQUIRED-SYSTEMS walks "sext" ->
+      # "khazern-extrinsic" -> "khazern", then asks ASDF to
+      # FIND-SYSTEM "khazern"'s own DIRECT-DEPENDENCIES, which somehow
+      # resolves to looking for a system literally named "trinsic".
+      # khazern-extrinsic.asd's own :depends-on is just ("khazern") --
+      # confirmed directly, more than once now -- so "trinsic" isn't
+      # coming from anything in this dependency chain's real ASDF
+      # system definitions. The most likely explanation, given "trinsic"
+      # is exactly "extrinsic" with "ex" stripped from the front: a
+      # package-inferred-system name-splitting bug in sblint's own
+      # ALL-REQUIRED-SYSTEMS walker, specifically triggered by a system
+      # name containing "extrinsic" as a substring -- not a problem in
+      # this repo, khazern-extrinsic, or the CL_SOURCE_REGISTRY setup.
+      # Non-blocking again, for real this time, pending an actual
+      # upstream sblint fix or a different dependency-walking strategy.
+      - name: Lint with sblint (non-blocking pending upstream sblint fix, see note above)
+        continue-on-error: true
         env:
           CL_SOURCE_REGISTRY: '(:source-registry (:tree "/tmp/cleavir-checkout/") :inherit-configuration)'
         run: ~/.roswell/bin/sblint sext.asd
@@ -100,8 +126,25 @@ jobs:
         with:
           asdf-system: sext
       - name: Build sext binary via Roswell
+        # MUST be `qlot exec ros build`, not a bare `ros build` --
+        # 40ants/setup-lisp@v4's `qlot install` (run as part of that
+        # action, against this repo's own qlfile) installs dependencies
+        # into a project-local .qlot/ client, not the global Roswell-
+        # managed Quicklisp client. A bare `ros build` only sees the
+        # global client, which has no knowledge of .qlot/'s locally
+        # installed concrete-syntax-tree/Cleavir/etc. -- confirmed
+        # directly via a real failing CI run (2026-06-21):
+        # ASDF/FIND-COMPONENT:MISSING-DEPENDENCY :REQUIRES
+        # "concrete-syntax-tree", even though the sibling unit-tests
+        # job (which goes through 40ants/run-tests@v2, itself
+        # qlot-aware) found the exact same dependency fine in the same
+        # run. This bug was invisible to all local verification this
+        # session, since the local sandbox also had these libraries
+        # installed into ITS OWN global Quicklisp client from earlier,
+        # unrelated work, masking the gap a genuinely fresh runner
+        # exposes.
         run: |
-          ros build roswell/sext.ros
+          qlot exec ros build roswell/sext.ros
       - name: Verify binary
         run: |
           ./roswell/sext --help

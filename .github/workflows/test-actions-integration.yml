@@ -1,0 +1,66 @@
+name: 'Integration test: setup-sext + sext actions'
+
+# Real, ongoing verification that denzuko/setup-sext and this repo's
+# own root-level action.yml (issue #11) actually work together end to
+# end on a real GitHub-hosted runner -- not just reasoning about
+# whether the YAML *should* work. This is exactly the gap noted in
+# issue #11 and CLAUDE.md as unverifiable from a sandboxed environment
+# with no Actions runner access; this workflow closes it for real,
+# every time it runs.
+
+on:
+  push:
+    branches: [develop, main]
+    paths:
+      - 'action.yml'
+      - '.github/workflows/test-actions-integration.yml'
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - 'action.yml'
+  workflow_dispatch: {}
+
+jobs:
+  integration-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install sext via denzuko/setup-sext
+        uses: denzuko/setup-sext@main
+        with:
+          version: ${{ github.sha }}
+
+      - name: Confirm sext is actually on PATH after setup-sext
+        run: |
+          command -v sext
+          sext --help
+
+      - name: Run this repo's own action against its own src/ directory
+        id: dump
+        uses: ./
+        with:
+          source: ./src
+          output: /tmp/integration-test-ast.json
+          fail-on-error: 'false'
+
+      - name: Verify output shape and report results
+        run: |
+          echo "files-dumped: ${{ steps.dump.outputs.files-dumped }}"
+          echo "files-failed: ${{ steps.dump.outputs.files-failed }}"
+
+          test -s /tmp/integration-test-ast.json || \
+            { echo "::error::output file is missing or empty"; exit 1; }
+
+          python3 -m json.tool /tmp/integration-test-ast.json > /dev/null || \
+            { echo "::error::output is not valid JSON"; exit 1; }
+
+          # At least one file in src/ must dump successfully -- a
+          # total failure (0 dumped) means something is fundamentally
+          # broken, not just issue #14's known per-file limitation.
+          if [ "${{ steps.dump.outputs.files-dumped }}" -lt 1 ]; then
+            echo "::error::zero files dumped successfully -- something is fundamentally broken, not just issue #14's known limitation"
+            exit 1
+          fi
+
+          echo "Integration test passed: setup-sext installed a working binary, and this repo's own action ran it against a real multi-file directory and produced valid JSON output."
