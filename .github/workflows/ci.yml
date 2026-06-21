@@ -1,5 +1,18 @@
 name: CI
 
+# LISP must be set explicitly -- 40ants/setup-lisp@v4's own docs claim
+# it defaults to sbcl when unset, but a real run (2026-06-21) showed
+# its own internal self-check step ("Checking if we installed correct
+# Lisp implementation", test.ros) hard-failing with "Env variable LISP
+# was not set." before any of this workflow's own steps even ran --
+# discovered only by actually checking real GitHub Actions run logs
+# via the API, not from any local verification (which never exercises
+# 40ants/setup-lisp@v4 at all). Every working example in the action's
+# own documentation sets this explicitly too, so this isn't relying on
+# undocumented behavior.
+env:
+  LISP: sbcl-bin
+
 on:
   push:
     branches: ["main", "develop", "feat/**", "fix/**", "chore/**", "refactor/**", "ci/**"]
