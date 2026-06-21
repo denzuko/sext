@@ -888,3 +888,40 @@ with `python3 -m json.tool`, not just assumed correct from reading the
 bash. `docs/schema.md` and the README both updated to document this
 action's distinct (file-grouped) output shape, separately from the
 binary's own per-file schema.
+
+## Repo hygiene (2026-06-21): LICENSE file
+
+README.md and `sext.asd` both claimed BSD-2-Clause throughout this
+whole session, but no `LICENSE` file actually existed in the repo --
+a real gap (no license file means GitHub's own license detection has
+nothing to find, and downstream consumers have no actual license text
+to point to). Added standard BSD-2-Clause text. Noted, not acted on:
+`qlfile.lock` is `.gitignore`'d (`*.lock` pattern) -- this looks like
+a deliberate existing project convention from before this session, not
+something introduced here, so left alone rather than second-guessed;
+worth flagging that it sits in some tension with docs/schema.md's
+"qlfile pins Cleavir to a specific git commit for reproducibility"
+framing, since the regular Quicklisp-dist-sourced deps (jzon, etc.)
+aren't pinned the same way without a committed lock file.
+
+## Issue #14 follow-up (2026-06-21): a third design option
+
+Posted a design analysis on the issue rather than picking a direction
+unilaterally. Grounded in actually reading `src/environment.lisp`'s
+`FUNCTION-INFO` method (not speculation): it delegates straight to
+`SB-CLTL2:FUNCTION-INFORMATION`, returning `NIL` -- fatal to Cleavir's
+CST-to-AST converter -- whenever SBCL itself has no knowledge of a
+name. Proposed a third option alongside the issue's original two (load
+the whole system first, vs. accept single-form scope): a cheap
+pre-declaration pass that just *reads* (never executes) every
+`DEFUN`/`DEFGENERIC` name across the unit being dumped and extends
+`FUNCTION-INFO` (already a generic function, already has an `:AROUND`
+precedent for `INCF`/`DECF`) to synthesize a `GLOBAL-FUNCTION-INFO` for
+any pre-collected name, without requiring it to be genuinely fbound.
+Resolves the same-file (and, extended across files, cross-file) case
+without ever running arbitrary source as a side effect of dumping its
+AST -- which matters more for a tool whose deployment context is
+security/policy-gate tooling than it would for an ordinary dev tool.
+Flagged as the most promising of the three on safety/cost grounds, not
+implemented -- still needs a direction decision before any of the
+three gets built.
