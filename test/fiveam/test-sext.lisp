@@ -154,6 +154,30 @@
   (signals error
     (sext:dump-string "(defun broken (")))
 
+(test DUMP-16-parse-error-report-includes-real-cause
+  "sext-parse-error's printed report includes the real underlying
+   condition's message, not just a bare \"failed to parse source\" with
+   the source echoed back -- the fix for issue #14's secondary finding
+   that dump-string previously discarded the real condition entirely
+   ((declare (ignore e)) before re-signalling a generic
+   sext-parse-error). Covers two distinct underlying causes to make
+   sure this isn't just printing one cached value: a genuine reader
+   error (unbalanced parens) and a Cleavir NO-FUNCTION-INFO error (a
+   call to a function the running image has no knowledge of, issue
+   #14's main finding) -- the report text should differ between them
+   and each should surface its own real, specific detail (the
+   undefined function's name, for the NO-FUNCTION-INFO case)."
+  (let ((reader-error-report
+          (handler-case (sext:dump-string "(defun broken (")
+            (sext:sext-parse-error (e) (format nil "~A" e))))
+        (no-function-info-report
+          (handler-case (sext:dump-string "(defun foo (x) (an-undefined-function x))")
+            (sext:sext-parse-error (e) (format nil "~A" e)))))
+    (is (stringp reader-error-report))
+    (is (stringp no-function-info-report))
+    (is (not (string= reader-error-report no-function-info-report)))
+    (is (search "AN-UNDEFINED-FUNCTION" no-function-info-report))))
+
 (test DUMP-11-empty-source-returns-empty-array
   "Empty source string produces a valid empty JSON array, not an error."
   (let* ((json-str (sext:dump-string ""))

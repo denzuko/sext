@@ -52,9 +52,16 @@
 (define-condition sext-error (error) ())
 
 (define-condition sext-parse-error (sext-error)
-  ((source :initarg :source :reader sext-parse-error-source))
+  ((source :initarg :source :reader sext-parse-error-source)
+   (cause :initarg :cause :initform nil :reader sext-parse-error-cause
+          :documentation "The real underlying condition that caused
+this error (a reader error, a Cleavir NO-FUNCTION-INFO error, or
+anything else DUMP-STRING's handler-case caught), if one is known.
+NIL when SEXT-PARSE-ERROR is signalled directly rather than via that
+handler-case -- callers should not assume this is always populated."))
   (:report (lambda (c stream)
-             (format stream "sext: failed to parse source: ~A"
+             (format stream "sext: failed to parse source~@[: ~A~]~@[~%~%~A~]"
+                     (sext-parse-error-cause c)
                      (sext-parse-error-source c)))))
 
 (define-condition sext-file-error (sext-error)
