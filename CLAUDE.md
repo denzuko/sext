@@ -812,3 +812,21 @@ once #14 is resolved. Full rationale in `test/policy/README.md`.
 
 Issue #2 (40ants-doc `docs/index.lisp`) not yet started.
 
+## Issue #2 notes (2026-06-21): 40ants-doc integration
+
+`docs/index.lisp` written: `@sext-manual` (top-level section, README-
+style pitch plus links to `docs/schema.md` and `policy/examples/`) and
+`@sext-api` (locatives for the actual exported API -- `dump-string`,
+`dump-file`, `main`, and the three condition types -- checked against
+`src/package.lisp`'s real `:export` list, not assumed). Verified by
+actually loading the `sext/doc` ASDF system (which was previously
+declared but broken -- the component it names didn't exist) rather
+than just writing plausible-looking `DEFSECTION` syntax and trusting
+it: confirms both sections bind correctly. Note for whoever next
+builds HTML/Markdown output from this: `40ants-doc` alone (what
+`sext/doc` depends on) only provides `DEFSECTION` and the
+cross-reference machinery; actually rendering to files needs the
+separate, heavier `40ants-doc-full` system (markdown parser and other
+deps `40ants-doc` deliberately doesn't pull in by default) -- noted
+directly in `docs/index.lisp`'s own header rather than left implicit.
+
