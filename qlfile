@@ -53,6 +53,20 @@
 ;     as a single monorepo at the URL below; every cleavir-*.asd file
 ;     lives in its own subdirectory, so the registry needs each
 ;     subdirectory pushed, not just the repo root.
+;
+; Note on reproducibility: none of the `ql <name>` lines below pin a
+; version themselves -- every entry resolves to :%version :latest by
+; default, confirmed directly by qlfile.lock's own generated content
+; (every entry's :initargs literally says :%version :latest). The
+; ACTUAL pinned versions for fiveam/jzon/concrete-syntax-tree/eclector/
+; khazern exist *only* in qlfile.lock, which `qlot install` was
+; directly confirmed to honor when present (re-ran a clean
+; `qlot install` against an existing qlfile.lock and got byte-identical
+; pinned versions back, installed from cache, not re-resolved against
+; whatever's currently latest). qlfile.lock is therefore committed
+; alongside this file -- update both together (`qlot install` after
+; editing this file regenerates the lock) rather than treating the
+; lock file as a disposable local artifact.
 
 ql fiveam
 ql jzon

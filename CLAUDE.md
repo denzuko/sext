@@ -925,3 +925,35 @@ security/policy-gate tooling than it would for an ordinary dev tool.
 Flagged as the most promising of the three on safety/cost grounds, not
 implemented -- still needs a direction decision before any of the
 three gets built.
+
+## Issue #14 follow-up (2026-06-21): fixed the smaller sub-item
+
+The bigger architectural question (load-system-first vs. single-form
+scope vs. the pre-declaration option proposed above) is still
+undecided -- not touched here. But the issue's smaller, immediate bug
+*is* fixed: `dump-string`'s `handler-case` previously discarded the
+real underlying condition entirely (`(declare (ignore e))`) before
+re-signalling a generic `SEXT-PARSE-ERROR` whose report was just
+"failed to parse source: <whole source echoed back>" -- no way to
+tell a genuine reader error from a `NO-FUNCTION-INFO` error from
+anything else without re-deriving it.
+
+Fixed: `SEXT-PARSE-ERROR` gained a `CAUSE` slot (the real condition,
+stored but not exported -- matches the existing convention that
+`SEXT-PARSE-ERROR-SOURCE` isn't exported either; callers interact via
+the condition's printed report, exactly how `MAIN`'s own CLI error
+path already works, not via accessors), and its `:REPORT` now leads
+with the cause's own message before the (now clearly separated, on
+its own line) source text. `dump-string` passes `:cause e` through
+instead of discarding it.
+
+Verified directly, not just inspected: both a genuine reader error
+(unbalanced parens) and a real `NO-FUNCTION-INFO` case now produce
+visibly different, individually-specific report text -- the
+`NO-FUNCTION-INFO` case's report names the actual undefined function
+(`AN-UNDEFINED-FUNCTION`), not a generic message. New test added,
+`DUMP-16-parse-error-report-includes-real-cause`, covering both cases
+and asserting they differ and that the undefined function's name
+actually appears. All 25 BDD checks (21 previous + 4 new from
+DUMP-16's multiple `is` assertions) pass; `opa test` and a full clean
+binary rebuild both still succeed.

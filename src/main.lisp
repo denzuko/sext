@@ -33,14 +33,20 @@ Cleavir CST-to-AST, walk the resulting AST(s), and return a JSON string:
 a JSON array with one entry per top-level form in SOURCE (the empty
 array for empty/all-whitespace SOURCE). Wraps any error encountered
 while reading or converting SOURCE -- malformed/unreadable Lisp source,
-most commonly -- in SEXT-PARSE-ERROR, rather than letting a raw reader
-condition or Cleavir condition escape."
+a Cleavir NO-FUNCTION-INFO error for a call to an unresolvable function
+(see issue #14), or anything else -- in SEXT-PARSE-ERROR, rather than
+letting a raw reader condition or Cleavir condition escape. Unlike an
+earlier version of this function, the real underlying condition is
+preserved (SEXT-PARSE-ERROR-CAUSE) and included in the report, not
+discarded -- a bare \"failed to parse source\" with no indication of
+*why* gave callers no way to distinguish a genuine syntax error from
+issue #14's limitation from anything else without re-deriving it
+themselves."
   (handler-case
       (serialize-to-json (walk-top-level-forms (%dump-forms-to-asts source)))
     (sext-error (e) (error e))
     (error (e)
-      (declare (ignore e))
-      (error 'sext-parse-error :source source))))
+      (error 'sext-parse-error :source source :cause e))))
 
 (defun dump-file (path)
   "Read and dump the Common Lisp source file at PATH (a pathname).
